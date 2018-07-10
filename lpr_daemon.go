@@ -33,43 +33,10 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 
 	lpr.closing = make(chan bool, 1)
 
-	if ipAddress == "" {
-		as, err := net.InterfaceAddrs()
-		if err != nil {
-			return &LprError{"Can't load interfaces " + err.Error()}
-		}
-		if len(as) <= 0 {
-			return &LprError{"No interfaces found"}
-		}
+	listenAddr := fmt.Sprintf(":%d", port)
+	fmt.Printf("\n\nListening on: %s\n", listenAddr)
 
-		var found bool
-		var ip net.IP
-		for _, iaddr := range as {
-
-			switch v := iaddr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-				found = true
-			case *net.IPAddr:
-				ip = v.IP
-				found = true
-			}
-			if found == true {
-				break
-			}
-		}
-
-		ipAddress = ip.String()
-	}
-
-	addr, err := net.ResolveIPAddr("", ipAddress)
-	if err != nil {
-		return &LprError{"Can't resolve IP-Address: " + ipAddress}
-	}
-	fmt.Printf("\n\nYour IP-Adresse: %s\n", addr.IP.String())
-
-	listenAddr := fmt.Sprintf("%s:%d", addr.IP.String(), port)
-
+	var err error
 	lpr.socket, err = net.Listen("tcp", listenAddr)
 	if err != nil {
 		return &LprError{"Can't listen to " + listenAddr + " : " + err.Error()}
@@ -261,9 +228,19 @@ func (lpr *LprConnection) RunConnection() {
 		default:
 		}
 
-		if err != nil && err != io.EOF {
-			fmt.Printf("\nReading Buffer Failed: %s\n", err.Error())
-			lpr.Status = int16(ERROR)
+		if err != nil {
+			if err == io.EOF {
+				if lpr.Status < END {
+					fmt.Printf("\nUnexpected EOF: %s\n", err)
+					lpr.Status = int16(ERROR)
+				} else {
+					fmt.Printf("\nFile was received!\n")
+				}
+			} else {
+				fmt.Printf("\nReading Buffer Failed: %s\n", err.Error())
+				lpr.Status = int16(ERROR)
+			}
+			break
 		} else {
 			if length == 0 {
 				if lpr.Status < END {
@@ -288,25 +265,12 @@ func (lpr *LprConnection) RunConnection() {
 
 			lpr.HandleData(buffer, int64(length))
 
-			one := []byte{}
-			if _, err = lpr.Connection.Read(one); err == io.EOF {
-				fmt.Printf("\nConnection is closed.\n")
-				lpr.Connection.Close()
-				lpr.Connection = nil
-				if lpr.Status < END {
+			if lpr.Status != DATABLOCK || !inData {
+				_, err = lpr.Connection.Write([]byte{0})
+				if err != nil {
+					fmt.Printf("\nSending Failed: %s\n", err.Error())
 					lpr.Status = int16(ERROR)
 				}
-				break
-			} else {
-
-				if lpr.Status != DATABLOCK || !inData {
-					_, err = lpr.Connection.Write([]byte{0})
-					if err != nil {
-						fmt.Printf("\nSending Failed: %s\n", err.Error())
-						lpr.Status = int16(ERROR)
-					}
-				}
-
 			}
 		}
 	}
@@ -384,11 +348,15 @@ func (lpr *LprConnection) Interprete(data []uint8, length int64) error {
 			}
 			lpr.bufferString = append(lpr.bufferString, data[i])
 		}
+
+		// TODO check if 0x0 at the end of bufferString is required
+		///     and remove it if not
 		lpr.bufferString = append(lpr.bufferString, 0)
 
 		if isPrqName {
 			/* Receive a printer job */
-			lpr.PrqName = string(lpr.bufferString[:len(lpr.bufferString)])
+			// dirty fix: remove 0x0 from bufferString
+			lpr.PrqName = string(lpr.bufferString[:len(lpr.bufferString)-1])
 		} else {
 			/* Receive control file */
 		}
