@@ -124,7 +124,7 @@ func (lpr *LprSend) Init(hostname, filePath string, port uint16) error {
 	// this.socket = new Socket( SocketFamily.IPV4, SocketType.STREAM, SocketProtocol.TCP );
 
 	/* Set the IP-Address from the remote Server */
-	ip, err := lpr.GetIP(hostname)
+	ip, err := GetIP(hostname)
 	if err != nil {
 		return &LprError{err.Error()}
 	}
@@ -140,7 +140,7 @@ func (lpr *LprSend) Init(hostname, filePath string, port uint16) error {
 }
 
 // GetIP Resolve the IP Address from the hostname
-func (lpr *LprSend) GetIP(hostname string) (*net.IPAddr, error) {
+func GetIP(hostname string) (*net.IPAddr, error) {
 
 	/* Try to resolve the hostname with default resolver */
 	resolver := net.DefaultResolver
