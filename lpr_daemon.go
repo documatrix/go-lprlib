@@ -212,8 +212,9 @@ func (lpr *LprConnection) RunConnection() {
 	var length int
 	var err error
 	lpr.Status = FILEDATA
+
+	buffer = make([]uint8, lpr.BufferSize)
 	for lpr.Status != int16(ERROR) {
-		buffer = make([]uint8, lpr.BufferSize)
 		length = 0
 
 		length, err = lpr.Connection.Read(buffer)
@@ -283,7 +284,7 @@ func (lpr *LprConnection) HandleData(data []uint8, length int64) {
 		dataArray := strings.Split(tstring, "\n")
 		for _, iv := range dataArray {
 			if len(iv) > 0 {
-				lpr.Interprete([]byte(iv), int64(len(iv)))
+				lpr.Interpret([]byte(iv), int64(len(iv)))
 			}
 		}
 	} else {
@@ -297,7 +298,7 @@ func (lpr *LprConnection) AddToFile(data []uint8, length int64) {
 	var test []uint8
 	if (lpr.tempFilesize - length) > 0 {
 		lpr.tempFilesize = lpr.tempFilesize - length
-		test = data[0:length]
+		test = data[:length]
 		_, err = lpr.Output.Write(test)
 		if err != nil {
 			fmt.Printf("\nWrite failed: %s\n", err.Error())
@@ -329,8 +330,8 @@ func (lpr *LprConnection) AddToFile(data []uint8, length int64) {
 	fmt.Printf("> %f %%\r", pro)
 }
 
-// Interprete This method interpret the data and set the variables
-func (lpr *LprConnection) Interprete(data []uint8, length int64) error {
+// Interpret This method interpret the data and set the variables
+func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
 	var err error
 	var tstring string
 	firstSymbol := data[0]
@@ -349,14 +350,9 @@ func (lpr *LprConnection) Interprete(data []uint8, length int64) error {
 			lpr.bufferString = append(lpr.bufferString, data[i])
 		}
 
-		// TODO check if 0x0 at the end of bufferString is required
-		///     and remove it if not
-		lpr.bufferString = append(lpr.bufferString, 0)
-
 		if isPrqName {
 			/* Receive a printer job */
-			// dirty fix: remove 0x0 from bufferString
-			lpr.PrqName = string(lpr.bufferString[:len(lpr.bufferString)-1])
+			lpr.PrqName = string(lpr.bufferString)
 		} else {
 			/* Receive control file */
 		}
@@ -402,13 +398,7 @@ func (lpr *LprConnection) Interprete(data []uint8, length int64) error {
 
 	/* I - Indent Printing */
 	case 'I':
-		lpr.bufferString = nil
-		for i := int64(1); i < length && data[i] != ' '; i++ {
-			lpr.bufferString = append(lpr.bufferString, data[i])
-		}
-		lpr.bufferString = append(lpr.bufferString, 0)
-		tstring = string(lpr.bufferString)
-		lpr.IntentingCount, err = strconv.ParseInt(tstring, 10, 64)
+		lpr.IntentingCount, err = strconv.ParseInt(string(data[1:length]), 10, 64)
 		if err != nil {
 			return err
 		}
@@ -486,12 +476,7 @@ func (lpr *LprConnection) Interprete(data []uint8, length int64) error {
 
 	/* p - Print file with 'pr' format */
 	case 'p':
-		lpr.bufferString = nil
-		for i := int64(1); i < length && data[i] != ' '; i++ {
-			lpr.bufferString = append(lpr.bufferString, data[i])
-		}
-		lpr.bufferString = append(lpr.bufferString, 0)
-		lpr.PrintFileWithPr = string(lpr.bufferString)
+		lpr.PrintFileWithPr = string(data[1:length])
 		fmt.Printf("p: %s\n", lpr.PrintFileWithPr)
 
 	/* r - File to print with FORTRAN carriage control */
