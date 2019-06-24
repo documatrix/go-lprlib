@@ -3,10 +3,11 @@ package lprlib
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/user"
-	"path"
+	"path/filepath"
 )
 
 // LprError This errordomain contains some errors wich may occur when you work with LprSend or LprDaemon
@@ -15,7 +16,7 @@ type LprError struct {
 }
 
 func (e *LprError) Error() string {
-	return fmt.Sprintf("%s", e.What)
+	return e.What
 }
 
 // LprSend This struct includes all methods to read a LprSender
@@ -58,15 +59,12 @@ func (lpr *LprSend) Init(hostname, filePath string, port uint16) error {
 		port = 515
 	}
 
+	if filePath == "" {
+		return &LprError{"No filename given"}
+	}
+
 	/* Set the input_file_name */
 	lpr.inputFileName = filePath
-
-	/* Set the basename of the for the config */
-	_, inputFileBasename := path.Split(filePath)
-
-	if inputFileBasename == "" {
-		return &LprError{"NO_FILE_NAME"}
-	}
 
 	/* Initializes the config */
 	lpr.Config = make(map[byte]string)
@@ -74,17 +72,17 @@ func (lpr *LprSend) Init(hostname, filePath string, port uint16) error {
 	/* Host name */
 	osHostname, err := os.Hostname()
 	if err != nil {
-		return &LprError{"Can't resolve Hostname"}
+		return &LprError{"Can't resolve hostname: " + err.Error()}
 	}
 	lpr.Config['H'] = osHostname
 
 	/* Name of source file */
-	lpr.Config['N'] = inputFileBasename
+	lpr.Config['N'] = filepath.Base(filePath)
 
 	/* User identification */
 	cuser, err := user.Current()
 	if err != nil {
-		return &LprError{"Can't resolve Username"}
+		return &LprError{"Can't resolve username: " + err.Error()}
 	}
 	lpr.Config['P'] = cuser.Name
 
@@ -181,7 +179,7 @@ func (lpr *LprSend) SendConfiguration(queue string) error {
 	if err != nil {
 		return &LprError{"PRINTER_ERROR: " + err.Error()}
 	}
-	fmt.Print("Start Config:", configTransmit)
+	logDebug("Start Config:", configTransmit)
 
 	/* receive_buffer is the buffer for the answer of the remote Server */
 	receiveBuffer := make([]byte, 1)
@@ -193,7 +191,7 @@ func (lpr *LprSend) SendConfiguration(queue string) error {
 	var length int
 	length, err = lpr.socket.Read(receiveBuffer)
 	if length != 0 {
-		fmt.Printf("Empfangen: %d\n", receiveBuffer[0])
+		logDebugf("Received: %d", receiveBuffer[0])
 		if receiveBuffer[0] != 0 {
 			errorstring := fmt.Sprint("PRINTER_ERROR Printer reported an error (", receiveBuffer[0], ")!")
 			return &LprError{errorstring}
@@ -222,14 +220,14 @@ func (lpr *LprSend) SendConfiguration(queue string) error {
 	if err != nil {
 		return &LprError{"PRINTER_ERROR: " + err.Error()}
 	}
-	fmt.Print("Config info:", configInfo)
+	logDebug("Config info:", configInfo)
 
 	/*
 	 * Receive answer ( 0 if there wasn't an error )
 	 */
 	length, err = lpr.socket.Read(receiveBuffer)
 	if length != 0 {
-		fmt.Printf("Empfangen: %d\n", receiveBuffer[0])
+		logDebugf("Received: %d", receiveBuffer[0])
 		if receiveBuffer[0] != 0 {
 			errorstring := fmt.Sprint("PRINTER_ERROR Printer reported an error (", receiveBuffer[0], ")!")
 			return &LprError{errorstring}
@@ -246,14 +244,14 @@ func (lpr *LprSend) SendConfiguration(queue string) error {
 	if err != nil {
 		return &LprError{"PRINTER_ERROR: " + err.Error()}
 	}
-	fmt.Print("Config:\n", configData)
+	logDebug("Config:\n", configData)
 
 	/*
 	 * Receive answer ( 0 if there wasn't an error )
 	 */
 	length, err = lpr.socket.Read(receiveBuffer)
 	if length != 0 {
-		fmt.Printf("Empfangen: %d\n", receiveBuffer[0])
+		logDebugf("Received: %d", receiveBuffer[0])
 		if receiveBuffer[0] != 0 {
 			errorstring := fmt.Sprint("PRINTER_ERROR Printer reported an error (", receiveBuffer[0], ")!")
 			return &LprError{errorstring}
@@ -269,26 +267,26 @@ func (lpr *LprSend) SendFile() error {
 	/* Prepare the input file for reading */
 	file, err := os.Open(lpr.inputFileName)
 	if err != nil {
-		return &LprError{"Can't open File: " + lpr.inputFileName}
+		return &LprError{fmt.Sprintf("Can't open file %s: %s", lpr.inputFileName, err)}
 	}
 
 	/* Get the size of the input file */
 	var fileInfo os.FileInfo
 	fileInfo, err = os.Stat(lpr.inputFileName)
 	if err != nil {
-		return &LprError{"Can't open File: " + lpr.inputFileName}
+		return &LprError{fmt.Sprintf("Can't stat file %s: %s", lpr.inputFileName, err)}
 	}
 
 	fileSize := fileInfo.Size()
 
 	if fileSize <= 0 {
-		return &LprError{"Can't read file"}
+		return &LprError{fmt.Sprintf("Can't read file %s: Invalid file size %d", lpr.inputFileName, fileSize)}
 	}
 
 	/* Host name */
 	osHostname, err := os.Hostname()
 	if err != nil {
-		return &LprError{"Can't resolve Hostname"}
+		return &LprError{"Can't resolve hostname: " + err.Error()}
 	}
 
 	/* Send the server the length of the input file */
@@ -297,7 +295,7 @@ func (lpr *LprSend) SendFile() error {
 	if err != nil {
 		return &LprError{"PRINTER_ERROR: " + err.Error()}
 	}
-	fmt.Print("\nData info:", dataInfo)
+	logDebug("Data info:", dataInfo)
 
 	/* receive_buffer is the buffer for the answer of the remote Server */
 	receiveBuffer := make([]byte, 1)
@@ -308,7 +306,7 @@ func (lpr *LprSend) SendFile() error {
 	var length int
 	length, err = lpr.socket.Read(receiveBuffer)
 	if length != 0 {
-		fmt.Printf("Empfangen: %d\n", receiveBuffer[0])
+		logDebugf("Received: %d", receiveBuffer[0])
 		if receiveBuffer[0] != 0 {
 			errorstring := fmt.Sprint("PRINTER_ERROR Printer reported an error (", receiveBuffer[0], ")!")
 			return &LprError{errorstring}
@@ -327,16 +325,19 @@ func (lpr *LprSend) SendFile() error {
 	var position uint64
 
 	/* file_buffer is a part of the input_file */
-	var fileBuffer []byte
+	fileBuffer := make([]byte, lpr.MaxSize)
 
-	var prozent float32
-	fmt.Println("Last transmit:")
-	for size == lpr.MaxSize {
-		fileBuffer = make([]byte, lpr.MaxSize)
-
+	// var percent float32
+	logDebug("Sending file...")
+	for {
 		rsize, err = file.Read(fileBuffer)
 		if err != nil {
-			return &LprError{"Can't read File: " + lpr.inputFileName}
+			if err != io.EOF {
+				return &LprError{fmt.Sprintf("Error reading from file %s: %s", lpr.inputFileName, err)}
+			}
+
+			// done
+			break
 		}
 		if rsize > 0 {
 			size = uint64(rsize)
@@ -354,21 +355,17 @@ func (lpr *LprSend) SendFile() error {
 
 		position += size
 
-		prozent = float32(position*100) / float32(fileSize+1)
-		fmt.Printf("Send file part: Position=%d, Size=%5d (%2.2f%%)\r", position, size, prozent)
-
-		// fmt.Printf("%v  len:%d cap:%d rsize:%d size:%d    \n", fileBuffer, len(fileBuffer), cap(fileBuffer), rsize, size)
-		// time.Sleep(10000 * time.Millisecond)
-
+		// percent = float32(position*100) / float32(fileSize+1)
+		// logDebugf("Send file part: Position=%d, Size=%5d (%2.2f%%)", position, size, percent)
 	}
-	fmt.Printf("\n")
+	logDebug("File sent")
 
 	/*
 	 * Receive answer ( 0 if there wasn't an error )
 	 */
 	length, err = lpr.socket.Read(receiveBuffer)
 	if length != 0 {
-		fmt.Printf("Empfangen: %d\n", receiveBuffer[0])
+		logDebugf("Received: %d", receiveBuffer[0])
 		if receiveBuffer[0] != 0 {
 			errorstring := fmt.Sprint("PRINTER_ERROR Printer reported an error (", receiveBuffer[0], ")!")
 			return &LprError{errorstring}
@@ -381,4 +378,36 @@ func (lpr *LprSend) SendFile() error {
 // Close Close the connection to the remote printer
 func (lpr *LprSend) Close() error {
 	return lpr.socket.Close()
+}
+
+// Send is a convenience function to send the given file to the remote printer
+func Send(file string, hostname string, port uint16, queue string) (err error) {
+	lpr := &LprSend{}
+
+	err = lpr.Init(hostname, file, port)
+	if err != nil {
+		err = fmt.Errorf("Error initializing connection to LPR printer %s, port %d, queue: %s! %s", hostname, port, queue, err)
+		return
+	}
+
+	defer func() {
+		cerr := lpr.Close()
+		if err == nil {
+			err = cerr
+		}
+	}()
+
+	err = lpr.SendConfiguration(queue)
+	if err != nil {
+		err = fmt.Errorf("Error sending configuration to LPR printer %s, port %d, queue: %s! %s", hostname, port, queue, err)
+		return
+	}
+
+	err = lpr.SendFile()
+	if err != nil {
+		err = fmt.Errorf("Error sending file to LPR printer %s, port %d, queue: %s! %s", hostname, port, queue, err)
+		return
+	}
+
+	return
 }

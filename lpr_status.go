@@ -8,7 +8,7 @@ import (
 )
 
 // GetStatus Reads the Status from the printer
-func GetStatus(hostname string, port int16, queue string, long bool, timeout time.Duration) (string, error) {
+func GetStatus(hostname string, port uint16, queue string, long bool, timeout time.Duration) (string, error) {
 
 	// Set default Port
 	if port == 0 {
