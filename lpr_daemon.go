@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+type QueueState func(queue string, list string, long bool) string
+
 // LprDaemon structure
 type LprDaemon struct {
 
@@ -20,6 +22,10 @@ type LprDaemon struct {
 	closing chan bool
 
 	socket net.Listener
+
+	// GetQueueState will be called if a client requests the queue state.
+	// If not set, "Idle" will be returned.
+	GetQueueState QueueState
 }
 
 // Init is the constructor
@@ -34,7 +40,7 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 	lpr.closing = make(chan bool, 1)
 
 	listenAddr := fmt.Sprintf(":%d", port)
-	fmt.Printf("\n\nListening on: %s\n", listenAddr)
+	logDebugf("Listening on: %s", listenAddr)
 
 	var err error
 	lpr.socket, err = net.Listen("tcp", listenAddr)
@@ -51,7 +57,7 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 func (lpr *LprDaemon) Listen() {
 	for {
 
-		fmt.Println("Wait for Connections...")
+		logDebug("Wait for Connections...")
 		newConn, err := lpr.socket.Accept()
 
 		select {
@@ -59,17 +65,17 @@ func (lpr *LprDaemon) Listen() {
 			if newConn != nil {
 				newConn.Close()
 			}
-			fmt.Println("Listener closed")
+			logDebug("Listener closed")
 			return
 		default:
 		}
 		if err != nil {
-			fmt.Println("Can't accept: " + err.Error())
+			logError("Can't accept connection: " + err.Error())
 		}
-		fmt.Println("Accepted Client")
+		logDebug("Accepted Client")
 
 		var newLprcon LprConnection
-		newLprcon.Init(newConn, 0)
+		newLprcon.Init(newConn, 0, lpr)
 
 		lpr.connections = append(lpr.connections, &newLprcon)
 	}
@@ -100,7 +106,7 @@ func (lpr *LprDaemon) DelFinishedConnection() {
 	bufferConnections = lpr.connections
 	lpr.connections = zeroValue
 	for i := 0; i < len(bufferConnections); i++ {
-		if bufferConnections[i].Status != END && bufferConnections[i].Status != int16(ERROR) {
+		if bufferConnections[i].Status != END && bufferConnections[i].Status != ERROR {
 			lpr.connections = append(lpr.connections, bufferConnections[i])
 		}
 	}
@@ -111,21 +117,29 @@ func (lpr *LprDaemon) GetConnections() []*LprConnection {
 	return lpr.connections
 }
 
+type ConnectionStatus int16
+
 const (
 	// BEGIN start to read data
-	BEGIN int16 = 0
+	BEGIN ConnectionStatus = 0
+
+	// PRINTJOB_SUB_COMMANDS receive print job sub commands
+	PRINTJOB_SUB_COMMANDS ConnectionStatus = 1
 
 	// FILEDATA in filedata - block right now
-	FILEDATA int16 = 2
+	FILEDATA ConnectionStatus = 2
 
 	// DATABLOCK in datablock-block right now
-	DATABLOCK int16 = 3
+	DATABLOCK ConnectionStatus = 3
 
 	// END end of the data
-	END int16 = 4
+	END ConnectionStatus = 4
+
+	// CLOSE the connection should be closed
+	CLOSE ConnectionStatus = 5
 
 	// ERROR Error
-	ERROR uint8 = 0xff
+	ERROR ConnectionStatus = 0xff
 )
 
 // LprConnection Accepted connection
@@ -174,7 +188,7 @@ type LprConnection struct {
 	IntentingCount int64
 
 	// Status Status
-	Status int16
+	Status ConnectionStatus
 
 	// PrintFileWithPr Print file with pr
 	PrintFileWithPr string
@@ -184,18 +198,22 @@ type LprConnection struct {
 
 	// closing Used for Closing the LprConnection
 	closing chan bool
+
+	// daemon contains a reference to the LprDaemon
+	daemon *LprDaemon
 }
 
 // Init is the constructor of LprConnection
 // socet is the accepted connection
 // bufferSize is per default 8192
-func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64) {
+func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDaemon) {
 	if bufferSize == 0 {
 		bufferSize = 8192
 	}
 	lpr.Connection = socket
 	lpr.BufferSize = bufferSize
 	lpr.closing = make(chan bool, 1)
+	lpr.daemon = daemon
 	go lpr.RunConnection()
 }
 
@@ -214,17 +232,17 @@ func (lpr *LprConnection) RunConnection() {
 	lpr.Status = FILEDATA
 
 	buffer = make([]uint8, lpr.BufferSize)
-	for lpr.Status != int16(ERROR) {
+	for lpr.Status != ERROR {
 		length = 0
 
 		length, err = lpr.Connection.Read(buffer)
 		select {
 		case <-lpr.closing:
-			lpr.Status = int16(ERROR)
+			lpr.Status = ERROR
 			if lpr.Output != nil {
 				lpr.Output.Close()
 			}
-			fmt.Println("Exit Connection")
+			logDebug("Exit Connection")
 			return
 		default:
 		}
@@ -232,29 +250,29 @@ func (lpr *LprConnection) RunConnection() {
 		if err != nil {
 			if err == io.EOF {
 				if lpr.Status < END {
-					fmt.Printf("\nUnexpected EOF: %s\n", err)
-					lpr.Status = int16(ERROR)
+					logErrorf("Unexpected EOF: %s", err)
+					lpr.Status = ERROR
 				} else {
-					fmt.Printf("\nFile was received!\n")
+					logDebug("File was received!")
 				}
 			} else {
-				fmt.Printf("\nReading Buffer Failed: %s\n", err.Error())
-				lpr.Status = int16(ERROR)
+				logErrorf("Reading buffer failed: %s", err.Error())
+				lpr.Status = ERROR
 			}
 			break
 		} else {
 			if length == 0 {
 				if lpr.Status < END {
-					lpr.Status = int16(ERROR)
+					lpr.Status = ERROR
 				} else {
-					fmt.Printf("\nFile was received!\n")
+					logDebug("File was received!")
 				}
 				break
 			}
 
 			if length == -1 {
-				fmt.Printf("\nFile could not be received!\n")
-				lpr.Status = int16(ERROR)
+				logError("File could not be received!")
+				lpr.Status = ERROR
 				break
 			}
 
@@ -266,11 +284,20 @@ func (lpr *LprConnection) RunConnection() {
 
 			lpr.HandleData(buffer, int64(length))
 
+			if lpr.Status == CLOSE {
+				lpr.Status = END
+				err = lpr.Connection.Close()
+				if err != nil {
+					logErrorf("Error closing connection: %s", err.Error())
+				}
+				break
+			}
+
 			if lpr.Status != DATABLOCK || !inData {
 				_, err = lpr.Connection.Write([]byte{0})
 				if err != nil {
-					fmt.Printf("\nSending Failed: %s\n", err.Error())
-					lpr.Status = int16(ERROR)
+					logErrorf("Sending failed: %s", err.Error())
+					lpr.Status = ERROR
 				}
 			}
 		}
@@ -284,7 +311,11 @@ func (lpr *LprConnection) HandleData(data []uint8, length int64) {
 		dataArray := strings.Split(tstring, "\n")
 		for _, iv := range dataArray {
 			if len(iv) > 0 {
-				lpr.Interpret([]byte(iv), int64(len(iv)))
+				if lpr.Status != PRINTJOB_SUB_COMMANDS {
+					lpr.Interpret([]byte(iv), int64(len(iv)))
+				} else {
+					lpr.InterpretJobSubCommand([]byte(iv), int64(len(iv)))
+				}
 			}
 		}
 	} else {
@@ -301,13 +332,13 @@ func (lpr *LprConnection) AddToFile(data []uint8, length int64) {
 		test = data[:length]
 		_, err = lpr.Output.Write(test)
 		if err != nil {
-			fmt.Printf("\nWrite failed: %s\n", err.Error())
+			logErrorf("Write failed: %s", err.Error())
 		}
 	} else {
 		test = data[:lpr.tempFilesize]
 		_, err = lpr.Output.Write(test)
 		if err != nil {
-			fmt.Printf("\nWrite failed: %s\n", err.Error())
+			logErrorf("Write failed: %s", err.Error())
 			return
 		}
 		if lpr.Output != nil {
@@ -318,46 +349,76 @@ func (lpr *LprConnection) AddToFile(data []uint8, length int64) {
 		lpr.Status = END
 	}
 
-	pro := float32(100.0) - float32(lpr.tempFilesize*100)/float32(lpr.Filesize)
-	fmt.Print("<")
-	for i := 0; i < 50; i++ {
-		if int(pro/2) < i {
-			fmt.Print(" ")
-		} else {
-			fmt.Print("-")
-		}
-	}
-	fmt.Printf("> %f %%\r", pro)
+	// pro := float32(100.0) - float32(lpr.tempFilesize*100)/float32(lpr.Filesize)
+	// fmt.Print("<")
+	// for i := 0; i < 50; i++ {
+	// 	if int(pro/2) < i {
+	// 		fmt.Print(" ")
+	// 	} else {
+	// 		fmt.Print("-")
+	// 	}
+	// }
+	// fmt.Printf("> %f %%\r", pro)
 }
 
-// Interpret This method interpret the data and set the variables
+// Interpret interprets the LPR daemon commands
 func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
-	var err error
-	var tstring string
 	firstSymbol := data[0]
 	switch firstSymbol {
 	/* Daemon commands */
 	/* 01 - Print any waiting jobs */
 	case 0x1:
 
+	/* 02 - Receive a printer job */
 	case 0x2:
-		lpr.bufferString = nil
-		isPrqName := true
-		for i := int64(1); i < length; i++ {
-			if data[i] == ' ' {
-				isPrqName = false
-			}
-			lpr.bufferString = append(lpr.bufferString, data[i])
-		}
-
-		if isPrqName {
-			/* Receive a printer job */
-			lpr.PrqName = string(lpr.bufferString)
-		} else {
-			/* Receive control file */
-		}
+		lpr.PrqName = string(data[1:length])
+		lpr.Status = PRINTJOB_SUB_COMMANDS
 
 	/* 03 - Send queue state (short) */
+	/* | 03 | Queue | SP | List | LF | */
+	case 0x3:
+		fallthrough
+
+	/* 04 - Send queue state (long) */
+	/* | 04 | Queue | SP | List | LF | */
+	case 0x4:
+		content := string(data[1:length])
+		parts := strings.SplitN(content, " ", 2)
+		queue := parts[0]
+		list := ""
+		if len(parts) > 1 {
+			list = parts[1]
+		}
+
+		lpr.replyQueueState(queue, list, firstSymbol == 0x4)
+
+	/* 05 - Remove jobs */
+	case 0x5:
+
+	default:
+		logErrorf("First Element: %02x (%c)", data[0], data[0])
+		logErrorf("Unknown Code: %s", string(data[:length]))
+		break
+	}
+
+	return nil
+}
+
+// InterpretJobSubCommand interprets the job sub commands which are received after
+// the "02 - Receive a printer job" command was read
+func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) error {
+	var err error
+	var tstring string
+	firstSymbol := data[0]
+	switch firstSymbol {
+	/* Daemon commands */
+	/* 01 - Abort job */
+	case 0x1:
+
+	/* 02 - Receive control file */
+	case 0x2:
+
+	/* 03 - Receive data file */
 	case 0x3:
 		lpr.Status = DATABLOCK
 		lpr.bufferString = nil
@@ -369,32 +430,26 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Filesize: %d\n", lpr.Filesize)
+		logDebugf("Filesize: %d", lpr.Filesize)
 		lpr.tempFilesize = lpr.Filesize
 		lpr.Output, err = ioutil.TempFile("", "")
 		if err != nil {
 			return err
 		}
 		lpr.SaveName = lpr.Output.Name()
-		fmt.Printf("New Data File: %s\n", lpr.SaveName)
-
-	/* 04 - Send queue state (long) */
-	case 0x4:
-
-	/* 05 - Remove jobs */
-	case 0x5:
+		logDebugf("New data file: %s", lpr.SaveName)
 
 	/* Control file lines */
 
 	/* C - Class for banner page */
 	case 'C':
 		lpr.ClassName = string(data[1:length])
-		fmt.Printf("Class name: %s\n", lpr.ClassName)
+		logDebugf("Class name: %s", lpr.ClassName)
 
 	/* H - Host name */
 	case 'H':
 		lpr.Hostname = string(data[1:length])
-		fmt.Printf("\nHostname: %s\n", lpr.Hostname)
+		logDebugf("Hostname: %s", lpr.Hostname)
 
 	/* I - Indent Printing */
 	case 'I':
@@ -402,12 +457,12 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("indenting_count: %d\n", lpr.IntentingCount)
+		logDebugf("indenting_count: %d", lpr.IntentingCount)
 
 	/* J - Job name for banner page */
 	case 'J':
 		lpr.JobName = string(data[1:length])
-		fmt.Printf("\nJob name: %s\n", lpr.JobName)
+		logDebugf("Job name: %s", lpr.JobName)
 
 	/* L - Print banner page */
 	case 'L':
@@ -420,12 +475,12 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
 	/* N - Name of source file */
 	case 'N':
 		lpr.Filename = string(data[1:length])
-		fmt.Printf("\nFilename: %s\n", lpr.Filename)
+		logDebugf("Filename: %s", lpr.Filename)
 
 	/* P - User identification */
 	case 'P':
 		lpr.UserIdentification = string(data[1:length])
-		fmt.Printf("\nUser Identification: %s\n", lpr.UserIdentification)
+		logDebugf("User identification: %s", lpr.UserIdentification)
 
 	/* S - Symbolic link data */
 	case 'S':
@@ -433,7 +488,7 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
 	/* T - Title for pr */
 	case 'T':
 		lpr.TitleText = string(data[1:length])
-		fmt.Printf("\nTitle Text: %s\n", lpr.TitleText)
+		logDebugf("Title text: %s", lpr.TitleText)
 
 	/* U - Unlink data file */
 	case 'U':
@@ -477,7 +532,7 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
 	/* p - Print file with 'pr' format */
 	case 'p':
 		lpr.PrintFileWithPr = string(data[1:length])
-		fmt.Printf("p: %s\n", lpr.PrintFileWithPr)
+		logDebugf("p: %s", lpr.PrintFileWithPr)
 
 	/* r - File to print with FORTRAN carriage control */
 	case 'r':
@@ -491,10 +546,27 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
 	case 0x00:
 
 	default:
-		fmt.Printf("First Element: %02x (%c)\n", data[0], data[0])
-		fmt.Printf("Unknown Code: %s\n", string(data[:length]))
+		logErrorf("First Element: %02x (%c)", data[0], data[0])
+		logErrorf("Unknown Code: %s", string(data[:length]))
 		break
 
 	}
+	return nil
+}
+
+func (lpr *LprConnection) replyQueueState(queue string, list string, long bool) error {
+
+	state := "Idle\n"
+	if lpr.daemon.GetQueueState != nil {
+		state = lpr.daemon.GetQueueState(queue, list, long)
+	}
+
+	_, err := lpr.Connection.Write([]byte(state))
+	if err != nil {
+		logErrorf("Sending queue state failed: %s", err.Error())
+	}
+
+	lpr.Status = CLOSE
+
 	return nil
 }

@@ -3,12 +3,14 @@ package lprlib
 import (
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"testing"
 	"time"
 )
 
 func TestDaemonSingleConnection(t *testing.T) {
+	SetDebugLogger(log.Print)
 	var err error
 	var out []byte
 	var name string
@@ -61,7 +63,7 @@ func TestDaemonSingleConnection(t *testing.T) {
 	for _, iv := range allcon {
 		out, err = ioutil.ReadFile(iv.SaveName)
 		if err != nil {
-			fmt.Println(err.Error())
+			t.Error(err)
 		} else {
 			os.Remove(iv.SaveName)
 			if text != string(out) {
@@ -77,10 +79,11 @@ func TestDaemonSingleConnection(t *testing.T) {
 	time.Sleep(time.Second)
 
 	os.Remove(name)
-
 }
 
 func TestDaemonLargeFileConnection(t *testing.T) {
+	SetDebugLogger(log.Print)
+
 	var err error
 	var out []byte
 	var name string
@@ -143,7 +146,7 @@ func TestDaemonLargeFileConnection(t *testing.T) {
 	for _, iv := range allcon {
 		out, err = ioutil.ReadFile(iv.SaveName)
 		if err != nil {
-			fmt.Println(err.Error())
+			t.Error(err)
 		} else {
 			os.Remove(iv.SaveName)
 			if text != string(out) {
@@ -159,9 +162,11 @@ func TestDaemonLargeFileConnection(t *testing.T) {
 	time.Sleep(time.Second)
 
 	os.Remove(name)
-
 }
+
 func TestDaemonMultipleConnection(t *testing.T) {
+	SetDebugLogger(log.Print)
+
 	var err error
 	var fcount int
 	var out []byte
@@ -280,7 +285,7 @@ func TestDaemonMultipleConnection(t *testing.T) {
 	for _, iv := range allcon {
 		out, err = ioutil.ReadFile(iv.SaveName)
 		if err != nil {
-			fmt.Println(err.Error())
+			t.Error(err)
 		} else {
 			os.Remove(iv.SaveName)
 			switch string(out) {
