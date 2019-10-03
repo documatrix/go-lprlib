@@ -35,7 +35,7 @@ func TestDaemonSingleConnection(t *testing.T) {
 		return
 	}
 
-	err = lprs.Init("127.0.0.1", name, port)
+	err = lprs.Init("127.0.0.1", name, port, "TestUser")
 	if err != nil {
 		fmt.Println(err.Error())
 		t.Fail()
@@ -118,7 +118,7 @@ func TestDaemonLargeFileConnection(t *testing.T) {
 		return
 	}
 
-	err = lprs.Init("127.0.0.1", name, port)
+	err = lprs.Init("127.0.0.1", name, port, "TestUser")
 	if err != nil {
 		fmt.Println(err.Error())
 		t.Fail()
@@ -216,14 +216,14 @@ func TestDaemonMultipleConnection(t *testing.T) {
 		return
 	}
 
-	err = lprs.Init("127.0.0.1", fileName1, port)
+	err = lprs.Init("127.0.0.1", fileName1, port, "TestUser")
 	if err != nil {
 		fmt.Println(err.Error())
 		t.Fail()
 		return
 	}
 
-	err = lprs2.Init("127.0.0.1", fileName2, port)
+	err = lprs2.Init("127.0.0.1", fileName2, port, "TestUser")
 	if err != nil {
 		fmt.Println(err.Error())
 		t.Fail()
@@ -257,7 +257,7 @@ func TestDaemonMultipleConnection(t *testing.T) {
 		return
 	}
 
-	err = lprs3.Init("127.0.0.1", fileName3, port)
+	err = lprs3.Init("127.0.0.1", fileName3, port, "TestUser")
 	if err != nil {
 		fmt.Println(err.Error())
 		t.Fail()

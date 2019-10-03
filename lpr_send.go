@@ -47,7 +47,7 @@ type LprSend struct {
 // Init This Methode initializes the LprSender
 // If lpr.MaxSize isn't set yet then it is 16*1024
 // The port is per default 515
-func (lpr *LprSend) Init(hostname, filePath string, port uint16) error {
+func (lpr *LprSend) Init(hostname, filePath string, port uint16, username string) error {
 
 	// init const
 	if lpr.MaxSize == 0 {
@@ -80,11 +80,14 @@ func (lpr *LprSend) Init(hostname, filePath string, port uint16) error {
 	lpr.Config['N'] = filepath.Base(filePath)
 
 	/* User identification */
-	cuser, err := user.Current()
-	if err != nil {
-		return &LprError{"Can't resolve username: " + err.Error()}
+	if username == "" {
+		cuser, err := user.Current()
+		if err != nil {
+			return &LprError{"Can't resolve username: " + err.Error()}
+		}
+		username = cuser.Name
 	}
-	lpr.Config['P'] = cuser.Name
+	lpr.Config['P'] = username
 
 	/* Print file with 'pr' format */
 	lpr.Config['p'] = "dfA000" + osHostname
@@ -381,10 +384,10 @@ func (lpr *LprSend) Close() error {
 }
 
 // Send is a convenience function to send the given file to the remote printer
-func Send(file string, hostname string, port uint16, queue string) (err error) {
+func Send(file string, hostname string, port uint16, queue string, username string) (err error) {
 	lpr := &LprSend{}
 
-	err = lpr.Init(hostname, file, port)
+	err = lpr.Init(hostname, file, port, username)
 	if err != nil {
 		err = fmt.Errorf("Error initializing connection to LPR printer %s, port %d, queue: %s! %s", hostname, port, queue, err)
 		return
