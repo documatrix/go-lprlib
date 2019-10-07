@@ -38,7 +38,7 @@ func TestSend(t *testing.T) {
 	err = lprd.Init(port, "")
 	require.Nil(t, err)
 
-	err = Send(file, "127.0.0.1", port, "raw")
+	err = Send(file, "127.0.0.1", port, "raw", "TestUser")
 	require.Nil(t, err)
 
 	time.Sleep(1 * time.Second)
@@ -49,6 +49,7 @@ func TestSend(t *testing.T) {
 		out, err := ioutil.ReadFile(iv.SaveName)
 		require.Nil(t, err)
 		os.Remove(iv.SaveName)
+		require.Equal(t, iv.UserIdentification, "TestUser")
 		require.Equal(t, text, string(out))
 	}
 
