@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestDaemonSingleConnection(t *testing.T) {
@@ -288,6 +290,7 @@ func TestDaemonMultipleConnection(t *testing.T) {
 			t.Error(err)
 		} else {
 			os.Remove(iv.SaveName)
+			require.Equal(t, iv.UserIdentification, "TestUser")
 			switch string(out) {
 			case text1:
 				fcount |= 0x1

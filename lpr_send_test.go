@@ -49,6 +49,7 @@ func TestSend(t *testing.T) {
 		out, err := ioutil.ReadFile(iv.SaveName)
 		require.Nil(t, err)
 		os.Remove(iv.SaveName)
+		require.Equal(t, iv.UserIdentification, "TestUser")
 		require.Equal(t, text, string(out))
 	}
 
