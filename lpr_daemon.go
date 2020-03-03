@@ -26,6 +26,11 @@ type LprDaemon struct {
 	// GetQueueState will be called if a client requests the queue state.
 	// If not set, "Idle" will be returned.
 	GetQueueState QueueState
+
+	// InputFileSaveDir is the directory into which received files will be saved.
+	// If empty, the default system temp directory will be used.
+	// if nil set, a temp file will be used instead of the directory
+	InputFileSaveDir string
 }
 
 // Init is the constructor
@@ -310,11 +315,15 @@ func (lpr *LprConnection) HandleData(data []uint8, length int64) {
 		tstring := string(data[:length])
 		dataArray := strings.Split(tstring, "\n")
 		for _, iv := range dataArray {
-			if len(iv) > 0 {
+			ivLen := len(iv)
+			if ivLen > 0 {
 				if lpr.Status != PRINTJOB_SUB_COMMANDS {
-					lpr.Interpret([]byte(iv), int64(len(iv)))
+					lpr.Interpret([]byte(iv), int64(ivLen))
 				} else {
-					lpr.InterpretJobSubCommand([]byte(iv), int64(len(iv)))
+					err := lpr.InterpretJobSubCommand([]byte(iv), int64(ivLen))
+					if err != nil {
+						logError(err)
+					}
 				}
 			}
 		}
@@ -428,14 +437,16 @@ func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) err
 		tstring = string(lpr.bufferString)
 		lpr.Filesize, err = strconv.ParseInt(tstring, 10, 64)
 		if err != nil {
-			return err
+			return fmt.Errorf("Error while parsing %s to integer! %s", tstring, err)
 		}
 		logDebugf("Filesize: %d", lpr.Filesize)
 		lpr.tempFilesize = lpr.Filesize
-		lpr.Output, err = ioutil.TempFile("", "")
+
+		lpr.Output, err = ioutil.TempFile(lpr.daemon.InputFileSaveDir, "")
 		if err != nil {
-			return err
+			return fmt.Errorf("Error while creating temporary file at %s! %s", lpr.daemon.InputFileSaveDir, err)
 		}
+
 		lpr.SaveName = lpr.Output.Name()
 		logDebugf("New data file: %s", lpr.SaveName)
 
