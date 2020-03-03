@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -292,4 +293,61 @@ func TestDaemonTimeout(t *testing.T) {
 	err = lprs.SendFile()
 	require.NotNil(t, err)
 	require.True(t, strings.Contains(err.Error(), "timeout"))
+}
+
+func TestDaemonInputFileSaveDirSetting(t *testing.T) {
+
+	inputFileSaveDir, err := ioutil.TempDir("", "")
+	require.Nil(t, err)
+
+	var lprd LprDaemon
+	defer lprd.Close()
+
+	lprd.InputFileSaveDir = inputFileSaveDir
+	port := uint16(2345)
+	err = lprd.Init(port, "")
+	require.Nil(t, err)
+
+	text := "Text for the file"
+	name, err := generateTempFile("", "", text)
+	defer os.Remove(name)
+	require.Nil(t, err)
+
+	var lprs LprSend
+	err = lprs.Init("127.0.0.1", name, port, "TestUser", time.Minute)
+	if err != nil {
+		fmt.Println(err.Error())
+		t.Fail()
+		return
+	}
+
+	err = lprs.SendConfiguration("raw")
+	if err != nil {
+		fmt.Println(err.Error())
+		t.Fail()
+		return
+	}
+
+	err = lprs.SendFile()
+	if err != nil {
+		fmt.Println(err.Error())
+		t.Fail()
+		return
+	}
+
+	for _, iv := range lprd.GetConnections() {
+
+		require.Equal(t, inputFileSaveDir, filepath.Dir(iv.SaveName))
+
+		out, err := ioutil.ReadFile(iv.SaveName)
+		if err != nil {
+			t.Error(err)
+		} else {
+			os.Remove(iv.SaveName)
+			if text != string(out) {
+				t.Fail()
+			}
+		}
+	}
+
 }
