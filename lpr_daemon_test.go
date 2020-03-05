@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,32 +32,16 @@ func TestDaemonSingleConnection(t *testing.T) {
 	var lprs LprSend
 
 	err = lprd.Init(port, "")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
-	err = lprs.Init("127.0.0.1", name, port, "TestUser")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	err = lprs.Init("127.0.0.1", name, port, "TestUser", time.Minute)
+	require.Nil(t, err)
 
 	err = lprs.SendConfiguration("raw")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
 	err = lprs.SendFile()
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
 	time.Sleep(1 * time.Second)
 
@@ -114,32 +99,16 @@ func TestDaemonLargeFileConnection(t *testing.T) {
 	var lprs LprSend
 
 	err = lprd.Init(port, "")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
-	err = lprs.Init("127.0.0.1", name, port, "TestUser")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	err = lprs.Init("127.0.0.1", name, port, "TestUser", time.Minute)
+	require.Nil(t, err)
 
 	err = lprs.SendConfiguration("raw")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
 	err = lprs.SendFile()
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
 	time.Sleep(5 * time.Second)
 
@@ -183,27 +152,15 @@ func TestDaemonMultipleConnection(t *testing.T) {
 	port := uint16(2347)
 
 	fileName1, err = generateTempFile("", "", text1)
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 	fmt.Println("Tempfile:", fileName1)
 
 	fileName2, err = generateTempFile("", "", text2)
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 	fmt.Println("Tempfile:", fileName2)
 
 	fileName3, err = generateTempFile("", "", text3)
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 	fmt.Println("Tempfile:", fileName3)
 
 	var lprd LprDaemon
@@ -212,73 +169,33 @@ func TestDaemonMultipleConnection(t *testing.T) {
 	var lprs3 LprSend
 
 	err = lprd.Init(port, "")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
-	err = lprs.Init("127.0.0.1", fileName1, port, "TestUser")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	err = lprs.Init("127.0.0.1", fileName1, port, "TestUser", time.Minute)
+	require.Nil(t, err)
 
-	err = lprs2.Init("127.0.0.1", fileName2, port, "TestUser")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	err = lprs2.Init("127.0.0.1", fileName2, port, "TestUser", time.Minute)
+	require.Nil(t, err)
 
 	err = lprs.SendConfiguration("raw")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
 	err = lprs2.SendConfiguration("raw")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
 	err = lprs.SendFile()
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 	err = lprs2.SendFile()
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
-	err = lprs3.Init("127.0.0.1", fileName3, port, "TestUser")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	err = lprs3.Init("127.0.0.1", fileName3, port, "TestUser", time.Minute)
+	require.Nil(t, err)
 
 	err = lprs3.SendConfiguration("raw")
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
 	err = lprs3.SendFile()
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
+	require.Nil(t, err)
 
 	time.Sleep(2 * time.Second)
 
@@ -338,4 +255,41 @@ func generateTempFile(dir, prefix, text string) (string, error) {
 	file.Close()
 
 	return file.Name(), nil
+}
+
+func TestDaemonTimeout(t *testing.T) {
+	port := uint16(2346)
+	sbyte := [10]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+	var fbyte [10000000]byte
+	for byteCount := uint32(0); byteCount < 100000; byteCount++ {
+		fbyte[byteCount] = sbyte[byteCount%10]
+	}
+
+	sfbyte := fbyte[:]
+	text := string(sfbyte)
+	name, err := generateTempFile("", "", text)
+	defer os.Remove(name)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	fmt.Println("Tempfile:", name)
+
+	var lprd LprDaemon
+	var lprs LprSend
+
+	err = lprd.Init(port, "")
+	require.Nil(t, err)
+
+	err = lprs.Init("127.0.0.1", name, port, "TestUser", time.Minute)
+	require.Nil(t, err)
+
+	err = lprs.SendConfiguration("raw")
+	require.Nil(t, err)
+
+	lprs.Timeout = 0
+	err = lprs.SendFile()
+	require.NotNil(t, err)
+	require.True(t, strings.Contains(err.Error(), "timeout"))
 }

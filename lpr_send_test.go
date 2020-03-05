@@ -38,7 +38,7 @@ func TestSend(t *testing.T) {
 	err = lprd.Init(port, "")
 	require.Nil(t, err)
 
-	err = Send(file, "127.0.0.1", port, "raw", "TestUser")
+	err = Send(file, "127.0.0.1", port, "raw", "TestUser", time.Minute)
 	require.Nil(t, err)
 
 	time.Sleep(1 * time.Second)
