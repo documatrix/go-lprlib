@@ -35,10 +35,10 @@ func TestDaemonSingleConnection(t *testing.T) {
 	err = lprd.Init(port, "")
 	require.Nil(t, err)
 
-	err = lprs.Init("127.0.0.1", name, port, "TestUser", time.Minute)
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
 	require.Nil(t, err)
 
-	err = lprs.SendConfiguration("raw")
+	err = lprs.SendConfiguration()
 	require.Nil(t, err)
 
 	err = lprs.SendFile()
@@ -102,10 +102,10 @@ func TestDaemonLargeFileConnection(t *testing.T) {
 	err = lprd.Init(port, "")
 	require.Nil(t, err)
 
-	err = lprs.Init("127.0.0.1", name, port, "TestUser", time.Minute)
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
 	require.Nil(t, err)
 
-	err = lprs.SendConfiguration("raw")
+	err = lprs.SendConfiguration()
 	require.Nil(t, err)
 
 	err = lprs.SendFile()
@@ -172,16 +172,16 @@ func TestDaemonMultipleConnection(t *testing.T) {
 	err = lprd.Init(port, "")
 	require.Nil(t, err)
 
-	err = lprs.Init("127.0.0.1", fileName1, port, "TestUser", time.Minute)
+	err = lprs.Init("127.0.0.1", fileName1, port, "raw", "TestUser", time.Minute)
 	require.Nil(t, err)
 
-	err = lprs2.Init("127.0.0.1", fileName2, port, "TestUser", time.Minute)
+	err = lprs2.Init("127.0.0.1", fileName2, port, "raw", "TestUser", time.Minute)
 	require.Nil(t, err)
 
-	err = lprs.SendConfiguration("raw")
+	err = lprs.SendConfiguration()
 	require.Nil(t, err)
 
-	err = lprs2.SendConfiguration("raw")
+	err = lprs2.SendConfiguration()
 	require.Nil(t, err)
 
 	err = lprs.SendFile()
@@ -189,10 +189,10 @@ func TestDaemonMultipleConnection(t *testing.T) {
 	err = lprs2.SendFile()
 	require.Nil(t, err)
 
-	err = lprs3.Init("127.0.0.1", fileName3, port, "TestUser", time.Minute)
+	err = lprs3.Init("127.0.0.1", fileName3, port, "raw", "TestUser", time.Minute)
 	require.Nil(t, err)
 
-	err = lprs3.SendConfiguration("raw")
+	err = lprs3.SendConfiguration()
 	require.Nil(t, err)
 
 	err = lprs3.SendFile()
@@ -283,10 +283,10 @@ func TestDaemonTimeout(t *testing.T) {
 	err = lprd.Init(port, "")
 	require.Nil(t, err)
 
-	err = lprs.Init("127.0.0.1", name, port, "TestUser", time.Minute)
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
 	require.Nil(t, err)
 
-	err = lprs.SendConfiguration("raw")
+	err = lprs.SendConfiguration()
 	require.Nil(t, err)
 
 	lprs.Timeout = 0
@@ -314,14 +314,14 @@ func TestDaemonInputFileSaveDirSetting(t *testing.T) {
 	require.Nil(t, err)
 
 	var lprs LprSend
-	err = lprs.Init("127.0.0.1", name, port, "TestUser", time.Minute)
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
 	if err != nil {
 		fmt.Println(err.Error())
 		t.Fail()
 		return
 	}
 
-	err = lprs.SendConfiguration("raw")
+	err = lprs.SendConfiguration()
 	if err != nil {
 		fmt.Println(err.Error())
 		t.Fail()
@@ -350,4 +350,193 @@ func TestDaemonInputFileSaveDirSetting(t *testing.T) {
 		}
 	}
 
+}
+
+func TestDaemonFileSize(t *testing.T) {
+	SetDebugLogger(log.Print)
+	var err error
+	var out []byte
+	var name string
+
+	port := uint16(2345)
+
+	text := "Text for the file"
+	name, err = generateTempFile("", "", text)
+	require.Nil(t, err)
+
+	fmt.Println("Tempfile:", name)
+
+	var lprd LprDaemon
+	var lprs LprSend
+
+	err = lprd.Init(port, "")
+	require.Nil(t, err)
+
+	file, err := os.Open(name)
+	require.Nil(t, err)
+	defer file.Close()
+
+	// send file with correct size
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	require.Nil(t, err)
+
+	err = lprs.SendConfiguration()
+	require.Nil(t, err)
+
+	err = lprs.sendFile(file, int64(len(text)))
+	require.Nil(t, err)
+	err = lprs.Close()
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+
+	connections := lprd.GetConnections()
+
+	require.Equal(t, 1, len(connections))
+	con := connections[0]
+	require.Equal(t, END, con.Status)
+	out, err = ioutil.ReadFile(con.SaveName)
+	require.Nil(t, err)
+	err = os.Remove(con.SaveName)
+	require.Nil(t, err)
+	require.Equal(t, text, string(out))
+	lprd.DelFinishedConnection()
+
+	// send file with size 0
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	require.Nil(t, err)
+
+	err = lprs.SendConfiguration()
+	require.Nil(t, err)
+
+	_, err = file.Seek(0, 0)
+	require.Nil(t, err)
+	err = lprs.sendFile(file, int64(len(text)))
+	require.Nil(t, err)
+	err = lprs.Close()
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+
+	connections = lprd.GetConnections()
+
+	require.Equal(t, 1, len(connections))
+	con = connections[0]
+	require.Equal(t, END, con.Status)
+	out, err = ioutil.ReadFile(con.SaveName)
+	require.Nil(t, err)
+	err = os.Remove(con.SaveName)
+	require.Nil(t, err)
+	require.Equal(t, text, string(out))
+	lprd.DelFinishedConnection()
+
+	// send file with incorrect size greater than 2GB
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	require.Nil(t, err)
+
+	err = lprs.SendConfiguration()
+	require.Nil(t, err)
+
+	_, err = file.Seek(0, 0)
+	require.Nil(t, err)
+	err = lprs.sendFile(file, 1024*1024*1024*1024)
+	require.Nil(t, err)
+	err = lprs.Close()
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+
+	connections = lprd.GetConnections()
+
+	require.Equal(t, 1, len(connections))
+	con = connections[0]
+	require.Equal(t, END, con.Status)
+	out, err = ioutil.ReadFile(con.SaveName)
+	require.Nil(t, err)
+	err = os.Remove(con.SaveName)
+	require.Nil(t, err)
+	require.Equal(t, text, string(out))
+	lprd.DelFinishedConnection()
+
+	// send file with incorrect size
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Second*2)
+	require.Nil(t, err)
+
+	err = lprs.SendConfiguration()
+	require.Nil(t, err)
+
+	_, err = file.Seek(0, 0)
+	require.Nil(t, err)
+	err = lprs.sendFile(file, 1024)
+	require.NotNil(t, err)
+	err = lprs.Close()
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+
+	connections = lprd.GetConnections()
+
+	require.Equal(t, 1, len(connections))
+	con = connections[0]
+	require.Equal(t, ERROR, con.Status)
+	err = os.Remove(con.SaveName)
+	require.Nil(t, err)
+
+	time.Sleep(time.Second)
+
+	lprd.Close()
+	os.Remove(name)
+}
+
+func TestDaemonSubCommandOrder(t *testing.T) {
+	SetDebugLogger(log.Print)
+	var err error
+	var out []byte
+	var name string
+
+	port := uint16(2345)
+
+	text := "Text for the file"
+	name, err = generateTempFile("", "", text)
+	require.Nil(t, err)
+
+	fmt.Println("Tempfile:", name)
+
+	var lprd LprDaemon
+	var lprs LprSend
+
+	err = lprd.Init(port, "")
+	require.Nil(t, err)
+
+	file, err := os.Open(name)
+	require.Nil(t, err)
+	defer file.Close()
+
+	// send file with correct size
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	require.Nil(t, err)
+
+	err = lprs.sendFile(file, int64(len(text)))
+	require.Nil(t, err)
+	err = lprs.SendConfiguration()
+	require.Nil(t, err)
+	err = lprs.Close()
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+
+	connections := lprd.GetConnections()
+
+	require.Equal(t, 1, len(connections))
+	con := connections[0]
+	require.Equal(t, END, con.Status)
+	out, err = ioutil.ReadFile(con.SaveName)
+	require.Nil(t, err)
+	err = os.Remove(con.SaveName)
+	require.Nil(t, err)
+	require.Equal(t, text, string(out))
+	lprd.DelFinishedConnection()
+
+	lprd.Close()
+	os.Remove(name)
 }
