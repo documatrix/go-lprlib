@@ -384,7 +384,7 @@ func (lpr *LprConnection) AddToFile(data []uint8, length int64) {
 	var test []uint8
 	end := false
 	if lpr.Filesize == 0 {
-		// file size is unkown, stop if last byte is \0
+		// file size is unknown, stop if last byte is \0
 		if length != 0 && data[length-1] == 0 {
 			length--
 			end = true
