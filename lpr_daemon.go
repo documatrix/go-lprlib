@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type QueueState func(queue string, list string, long bool) string
@@ -31,6 +32,10 @@ type LprDaemon struct {
 	// If empty, the default system temp directory will be used.
 	// if nil set, a temp file will be used instead of the directory
 	InputFileSaveDir string
+
+	// Trace states if the LprDaemon should create a trace file for each connection.
+	// The trace file will be saved into the InputFileSaveDir or system temp directory.
+	Trace bool
 }
 
 // Init is the constructor
@@ -236,6 +241,18 @@ func (lpr *LprConnection) RunConnection() {
 	var err error
 	lpr.Status = FILEDATA
 
+	// traceFile
+	var traceFile *os.File
+	if lpr.daemon.Trace {
+		traceFile, err = ioutil.TempFile(lpr.daemon.InputFileSaveDir, "lpr_trace_*")
+		if err != nil {
+			logErrorf("failed to create trace file: %v", err)
+		}
+		defer traceFile.Close()
+		logDebugf("Created trace file %s", traceFile.Name())
+		traceFile.WriteString(fmt.Sprintf("LPR connection trace %s\n", time.Now()))
+	}
+
 	buffer = make([]uint8, lpr.BufferSize)
 	for lpr.Status != ERROR {
 		length = 0
@@ -252,26 +269,23 @@ func (lpr *LprConnection) RunConnection() {
 		default:
 		}
 
-		if err != nil {
-			if err == io.EOF {
-				if lpr.Status < END {
-					logErrorf("Unexpected EOF: %s", err)
-					lpr.Status = ERROR
-				} else {
-					logDebug("File was received!")
-				}
+		if traceFile != nil {
+			traceFile.WriteString(fmt.Sprintf("received message %d:\n", length))
+			if err != nil {
+				traceFile.WriteString(fmt.Sprintf("error: %v\n", err))
 			} else {
-				logErrorf("Reading buffer failed: %s", err.Error())
-				lpr.Status = ERROR
+				traceFile.WriteString("-----\n")
+				traceFile.Write(buffer[:length])
+				traceFile.WriteString("\n-----\n")
 			}
+		}
+
+		if err != nil {
+			lpr.End(err)
 			break
 		} else {
 			if length == 0 {
-				if lpr.Status < END {
-					lpr.Status = ERROR
-				} else {
-					logDebug("File was received!")
-				}
+				lpr.End(nil)
 				break
 			}
 
@@ -290,11 +304,8 @@ func (lpr *LprConnection) RunConnection() {
 			lpr.HandleData(buffer, int64(length))
 
 			if lpr.Status == CLOSE {
+				lpr.Close()
 				lpr.Status = END
-				err = lpr.Connection.Close()
-				if err != nil {
-					logErrorf("Error closing connection: %s", err.Error())
-				}
 				break
 			}
 
@@ -306,6 +317,41 @@ func (lpr *LprConnection) RunConnection() {
 				}
 			}
 		}
+	}
+}
+
+func (lpr *LprConnection) End(err error) {
+	if lpr.Status < END {
+		if (lpr.Status == DATABLOCK && lpr.Filesize == 0) ||
+			(lpr.Status == PRINTJOB_SUB_COMMANDS && lpr.SaveName != "" && lpr.Output == nil) {
+			logDebug("File was received!")
+			lpr.Status = END
+		} else if err == io.EOF {
+			logErrorf("Unexpected EOF: %s", err)
+			lpr.Status = ERROR
+		} else if err != nil {
+			logErrorf("Reading buffer failed: %s", err.Error())
+			lpr.Status = ERROR
+		} else {
+			logDebug("Received unexpected end!")
+			lpr.Status = ERROR
+		}
+	} else {
+		logDebug("File was received!")
+		lpr.Status = END
+	}
+	lpr.Close()
+}
+
+func (lpr *LprConnection) Close() {
+	if lpr.Output != nil {
+		lpr.Output.Close()
+		lpr.Output = nil
+	}
+
+	err := lpr.Connection.Close()
+	if err != nil {
+		logErrorf("Error closing connection: %s", err.Error())
 	}
 }
 
@@ -336,7 +382,19 @@ func (lpr *LprConnection) HandleData(data []uint8, length int64) {
 func (lpr *LprConnection) AddToFile(data []uint8, length int64) {
 	var err error
 	var test []uint8
-	if (lpr.tempFilesize - length) > 0 {
+	end := false
+	if lpr.Filesize == 0 {
+		// file size is unknown, stop if last byte is \0
+		if length != 0 && data[length-1] == 0 {
+			length--
+			end = true
+		}
+		test = data[:length]
+		_, err = lpr.Output.Write(test)
+		if err != nil {
+			logErrorf("Write failed: %s", err.Error())
+		}
+	} else if (lpr.tempFilesize - length) > 0 {
 		lpr.tempFilesize = lpr.tempFilesize - length
 		test = data[:length]
 		_, err = lpr.Output.Write(test)
@@ -350,12 +408,15 @@ func (lpr *LprConnection) AddToFile(data []uint8, length int64) {
 			logErrorf("Write failed: %s", err.Error())
 			return
 		}
+		end = true
+	}
+	if end {
 		if lpr.Output != nil {
 			lpr.Output.Close()
 			lpr.Output = nil
 		}
 		lpr.tempFilesize = lpr.tempFilesize - length
-		lpr.Status = END
+		lpr.Status = PRINTJOB_SUB_COMMANDS
 	}
 
 	// pro := float32(100.0) - float32(lpr.tempFilesize*100)/float32(lpr.Filesize)
@@ -440,6 +501,10 @@ func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) err
 			return fmt.Errorf("Error while parsing %s to integer! %s", tstring, err)
 		}
 		logDebugf("Filesize: %d", lpr.Filesize)
+		if lpr.Filesize > 2147483648 {
+			lpr.Filesize = 0
+			logDebug("Filesize > 2GB, won't check received byte count")
+		}
 		lpr.tempFilesize = lpr.Filesize
 
 		lpr.Output, err = ioutil.TempFile(lpr.daemon.InputFileSaveDir, "")

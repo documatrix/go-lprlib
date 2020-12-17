@@ -47,12 +47,16 @@ type LprSend struct {
 	// Timeout is the duration after which each read / write
 	// operation will fail.
 	Timeout time.Duration
+
+	queue string
+
+	printJobStarted bool
 }
 
 // Init This Methode initializes the LprSender
 // If lpr.MaxSize isn't set yet then it is 16*1024
 // The port is per default 515
-func (lpr *LprSend) Init(hostname, filePath string, port uint16, username string, timeout time.Duration) error {
+func (lpr *LprSend) Init(hostname, filePath string, port uint16, queue string, username string, timeout time.Duration) error {
 
 	// init const
 	if lpr.MaxSize == 0 {
@@ -67,6 +71,8 @@ func (lpr *LprSend) Init(hostname, filePath string, port uint16, username string
 	if filePath == "" {
 		return &LprError{"No filename given"}
 	}
+
+	lpr.queue = queue
 
 	// Set LPR sender timeout
 	lpr.Timeout = timeout
@@ -188,21 +194,17 @@ func (lpr *LprSend) writeString(text string) (int, error) {
 	return lpr.writeByte(btext)
 }
 
-// SendConfiguration Sends the configuration to the remote printer
-func (lpr *LprSend) SendConfiguration(queue string) error {
+func (lpr *LprSend) startPrintJob() error {
+	if lpr.printJobStarted {
+		return nil
+	}
 
-	var err error
-	/*
-	 * Send Directory prefix for the output file
-	 * config_transmit is the string which is sent to the remote Server
-	 * A config transmit must have a new line command at the ending
-	 */
-	configTransmit := fmt.Sprintf("%c%s\n", 0x02, queue)
-	_, err = lpr.writeString(configTransmit)
+	printJobMessage := fmt.Sprintf("%c%s\n", 0x02, lpr.queue)
+	_, err := lpr.writeString(printJobMessage)
 	if err != nil {
 		return &LprError{"PRINTER_ERROR: " + err.Error()}
 	}
-	logDebug("Start Config:", configTransmit)
+	logDebug("start print job:", printJobMessage)
 
 	/* receive_buffer is the buffer for the answer of the remote Server */
 	receiveBuffer := make([]byte, 1)
@@ -211,8 +213,7 @@ func (lpr *LprSend) SendConfiguration(queue string) error {
 	 * Receive answer ( 0 if there wasn't an error )
 	 * length is length of the answer, maximum length is the receive_buffer size
 	 */
-	var length int
-	length, err = lpr.readByte(receiveBuffer)
+	length, err := lpr.readByte(receiveBuffer)
 	if err != nil {
 		return &LprError{err.Error()}
 	}
@@ -223,6 +224,21 @@ func (lpr *LprSend) SendConfiguration(queue string) error {
 			return &LprError{errorstring}
 		}
 	}
+
+	lpr.printJobStarted = true
+
+	return nil
+}
+
+// SendConfiguration Sends the configuration to the remote printer
+func (lpr *LprSend) SendConfiguration() error {
+
+	if err := lpr.startPrintJob(); err != nil {
+		return err
+	}
+
+	/* receive_buffer is the buffer for the answer of the remote Server */
+	receiveBuffer := make([]byte, 1)
 
 	/* Create config data string */
 	var configData string
@@ -251,7 +267,7 @@ func (lpr *LprSend) SendConfiguration(queue string) error {
 	/*
 	 * Receive answer ( 0 if there wasn't an error )
 	 */
-	length, err = lpr.readByte(receiveBuffer)
+	length, err := lpr.readByte(receiveBuffer)
 	if err != nil {
 		return &LprError{err.Error()}
 	}
@@ -315,6 +331,25 @@ func (lpr *LprSend) SendFile() error {
 		return &LprError{fmt.Sprintf("Can't read file %s: Invalid file size %d", lpr.inputFileName, fileSize)}
 	}
 
+	err = lpr.sendFile(file, fileSize)
+
+	if cErr := file.Close(); cErr != nil {
+		if err == nil {
+			err = cErr
+		} else {
+			logErrorf("Failed to close file %s: %v", lpr.inputFileName, cErr)
+		}
+	}
+
+	return err
+}
+
+func (lpr *LprSend) sendFile(reader io.Reader, fileSize int64) error {
+
+	if err := lpr.startPrintJob(); err != nil {
+		return err
+	}
+
 	/* Host name */
 	osHostname, err := os.Hostname()
 	if err != nil {
@@ -365,7 +400,7 @@ func (lpr *LprSend) SendFile() error {
 	// var percent float32
 	logDebug("Sending file...")
 	for {
-		rsize, err = file.Read(fileBuffer)
+		rsize, err = reader.Read(fileBuffer)
 		if err != nil {
 			if err != io.EOF {
 				return &LprError{fmt.Sprintf("Error reading from file %s: %s", lpr.inputFileName, err)}
@@ -422,7 +457,7 @@ func (lpr *LprSend) Close() error {
 func Send(file string, hostname string, port uint16, queue string, username string, timeout time.Duration) (err error) {
 	lpr := &LprSend{}
 
-	err = lpr.Init(hostname, file, port, username, timeout)
+	err = lpr.Init(hostname, file, port, queue, username, timeout)
 	if err != nil {
 		err = fmt.Errorf("Error initializing connection to LPR printer %s, port %d, queue: %s! %s", hostname, port, queue, err)
 		return
@@ -435,7 +470,7 @@ func Send(file string, hostname string, port uint16, queue string, username stri
 		}
 	}()
 
-	err = lpr.SendConfiguration(queue)
+	err = lpr.SendConfiguration()
 	if err != nil {
 		err = fmt.Errorf("Error sending configuration to LPR printer %s, port %d, queue: %s! %s", hostname, port, queue, err)
 		return
