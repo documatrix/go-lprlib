@@ -27,7 +27,7 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 		code = byte(3)
 	}
 
-	logDebug("Checking status of LPR printer %s, port %d, queue %s, long flag %v and timeout %v", hostname, port, long, timeout)
+	logDebugf("Checking status of LPR printer %s, port %d, queue %s, long flag %v and timeout %v", hostname, port, queue, long, timeout)
 
 	// Set default time.Duration
 	var timeoutDuration time.Duration
@@ -39,7 +39,7 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 
 	/* Connect to Server! */
 	ipstring := net.JoinHostPort(hostname, fmt.Sprint(port))
-	logDebug("Connecting to printer %s using timeout %d", ipstring, timeoutDuration)
+	logDebugf("Connecting to printer %s using timeout %d", ipstring, timeoutDuration)
 	socket, err := net.DialTimeout("tcp", ipstring, timeoutDuration)
 	if err != nil {
 		return "", &LprError{"Can't reach printer: " + err.Error()}
@@ -70,7 +70,7 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 	socket.SetWriteDeadline(time.Now().Add(timeoutDuration))
 	// List items are not used because they only filter the output
 	command := fmt.Sprintf("%c%s\n", code, queue)
-	logDebug("Sending command %s to printer", command)
+	logDebugf("Sending command %s to printer", command)
 	_, err = socket.Write([]byte(command))
 	if err != nil {
 		return "", &LprError{"Can't write to printer: " + err.Error()}
@@ -83,7 +83,7 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 		socket.SetReadDeadline(time.Now().Add(timeoutDuration))
 		len, err = socket.Read(buffer)
 		ret += string(buffer[:len])
-		logDebug("Intermediate result: %s", ret)
+		logDebugf("Intermediate result: %s", ret)
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -93,6 +93,6 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 		}
 	}
 
-	logDebug("Final result: %s", ret)
+	logDebugf("Final result: %s", ret)
 	return ret, nil
 }
