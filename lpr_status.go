@@ -5,8 +5,6 @@ import (
 	"io"
 	"net"
 	"time"
-
-	log "github.com/sirupsen/logrus"
 )
 
 // GetStatus Reads the Status from the printer
@@ -29,7 +27,7 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 		code = byte(3)
 	}
 
-	log.Debugf("Checking status of LPR printer %s, port %d, queue %s, long flag %v and timeout %v", hostname, port, long, timeout)
+	logDebug("Checking status of LPR printer %s, port %d, queue %s, long flag %v and timeout %v", hostname, port, long, timeout)
 
 	// Set default time.Duration
 	var timeoutDuration time.Duration
@@ -41,7 +39,7 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 
 	/* Connect to Server! */
 	ipstring := net.JoinHostPort(hostname, fmt.Sprint(port))
-	log.Debugf("Connecting to printer %s using timeout %d", ipstring, timeoutDuration)
+	logDebug("Connecting to printer %s using timeout %d", ipstring, timeoutDuration)
 	socket, err := net.DialTimeout("tcp", ipstring, timeoutDuration)
 	if err != nil {
 		return "", &LprError{"Can't reach printer: " + err.Error()}
@@ -72,7 +70,7 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 	socket.SetWriteDeadline(time.Now().Add(timeoutDuration))
 	// List items are not used because they only filter the output
 	command := fmt.Sprintf("%c%s\n", code, queue)
-	log.Debugf("Sending command %s to printer", command)
+	logDebug("Sending command %s to printer", command)
 	_, err = socket.Write([]byte(command))
 	if err != nil {
 		return "", &LprError{"Can't write to printer: " + err.Error()}
@@ -85,7 +83,7 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 		socket.SetReadDeadline(time.Now().Add(timeoutDuration))
 		len, err = socket.Read(buffer)
 		ret += string(buffer[:len])
-		log.Debugf("Intermediate result: %s", ret)
+		logDebug("Intermediate result: %s", ret)
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -95,6 +93,6 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 		}
 	}
 
-	log.Debugf("Final result: %s", ret)
+	logDebug("Final result: %s", ret)
 	return ret, nil
 }
