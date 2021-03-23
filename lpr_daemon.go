@@ -49,7 +49,7 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 
 	lpr.closing = make(chan bool, 1)
 
-	listenAddr := fmt.Sprintf(":%d", port)
+	listenAddr := fmt.Sprintf("%s:%d", ipAddress, port)
 	logDebugf("Listening on: %s", listenAddr)
 
 	var err error
