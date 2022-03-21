@@ -92,6 +92,7 @@ func (lpr *LprSend) Init(hostname, filePath string, port uint16, queue string, u
 
 	/* Name of source file */
 	lpr.Config['N'] = filepath.Base(filePath)
+	lpr.Config['J'] = filepath.Base(filePath)
 
 	/* User identification */
 	if username == "" {
