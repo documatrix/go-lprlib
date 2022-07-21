@@ -102,14 +102,14 @@ func TestDaemonChangeFilePermission(t *testing.T) {
 
 	lprd.SetFileMask(0644)
 
-	err = lprs.Init("127.0.0.1", name, port)
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
 	if err != nil {
 		fmt.Println(err.Error())
 		t.Fail()
 		return
 	}
 
-	err = lprs.SendConfiguration("raw")
+	err = lprs.SendConfiguration()
 	if err != nil {
 		fmt.Println(err.Error())
 		t.Fail()
