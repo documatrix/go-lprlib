@@ -84,9 +84,7 @@ func TestDaemonChangeFilePermission(t *testing.T) {
 
 	text := "Text for the file"
 	name, err = generateTempFile("", "", text)
-	if err != nil {
-		fmt.Println(err.Error())
-	}
+	require.Nil(t, err)
 
 	fmt.Println("Tempfile:", name)
 
