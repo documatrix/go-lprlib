@@ -56,7 +56,7 @@ func TestDaemonSingleConnection(t *testing.T) {
 
 		out, err = ioutil.ReadFile(iv.SaveName)
 		if err != nil {
-			fmt.Println(err.Error())
+			t.Error(err)
 		} else {
 			os.Remove(iv.SaveName)
 			if text != string(out) {
