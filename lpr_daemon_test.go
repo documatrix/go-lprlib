@@ -2,6 +2,7 @@ package lprlib
 
 import (
 	"fmt"
+	"io/fs"
 	"io/ioutil"
 	"log"
 	"os"
@@ -49,6 +50,86 @@ func TestDaemonSingleConnection(t *testing.T) {
 	allcon := lprd.GetConnections()
 
 	for _, iv := range allcon {
+		fi, err := os.Stat(iv.SaveName)
+		require.Nil(t, err)
+		require.Equal(t, fs.FileMode(0600), fi.Mode().Perm())
+
+		out, err = ioutil.ReadFile(iv.SaveName)
+		if err != nil {
+			t.Error(err)
+		} else {
+			os.Remove(iv.SaveName)
+			if text != string(out) {
+				t.Fail()
+			}
+		}
+	}
+
+	time.Sleep(time.Second)
+
+	lprd.Close()
+
+	time.Sleep(time.Second)
+
+	os.Remove(name)
+
+}
+
+func TestDaemonChangeFilePermission(t *testing.T) {
+	var err error
+	var out []byte
+	var name string
+
+	port := uint16(2345)
+
+	text := "Text for the file"
+	name, err = generateTempFile("", "", text)
+	require.Nil(t, err)
+
+	fmt.Println("Tempfile:", name)
+
+	var lprd LprDaemon
+	var lprs LprSend
+
+	err = lprd.Init(port, "")
+	if err != nil {
+		fmt.Println(err.Error())
+		t.Fail()
+		return
+	}
+
+	lprd.SetFileMask(0644)
+
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	if err != nil {
+		fmt.Println(err.Error())
+		t.Fail()
+		return
+	}
+
+	err = lprs.SendConfiguration()
+	if err != nil {
+		fmt.Println(err.Error())
+		t.Fail()
+		return
+	}
+
+	err = lprs.SendFile()
+	if err != nil {
+		fmt.Println(err.Error())
+		t.Fail()
+		return
+	}
+
+	time.Sleep(1 * time.Second)
+
+	allcon := lprd.GetConnections()
+
+	for _, iv := range allcon {
+		fi, err := os.Stat(iv.SaveName)
+		require.Nil(t, err)
+		require.Equal(t, fs.FileMode(0644), fi.Mode().Perm())
+
 		out, err = ioutil.ReadFile(iv.SaveName)
 		if err != nil {
 			t.Error(err)

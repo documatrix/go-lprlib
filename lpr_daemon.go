@@ -4,14 +4,20 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type QueueState func(queue string, list string, long bool) string
+
+func init() {
+	rand.Seed(time.Now().UnixMicro())
+}
 
 // LprDaemon structure
 type LprDaemon struct {
@@ -36,6 +42,8 @@ type LprDaemon struct {
 	// Trace states if the LprDaemon should create a trace file for each connection.
 	// The trace file will be saved into the InputFileSaveDir or system temp directory.
 	Trace bool
+
+	fileMask os.FileMode
 }
 
 // Init is the constructor
@@ -46,6 +54,8 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 	if port == 0 {
 		port = 515
 	}
+
+	lpr.fileMask = 0600
 
 	lpr.closing = make(chan bool, 1)
 
@@ -61,6 +71,12 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 	go lpr.Listen()
 
 	return nil
+}
+
+// SetFileMask can be used to set the file mask which should be applied to the
+// data file which is written by new connections.
+func (lpr *LprDaemon) SetFileMask(fileMask os.FileMode) {
+	lpr.fileMask = fileMask
 }
 
 // Listen waits for a new connection and accept them
@@ -474,6 +490,22 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
 	return nil
 }
 
+func (lpr *LprConnection) createTempFile() (*os.File, error) {
+	try := 0
+	for {
+		fileName := filepath.Join(lpr.daemon.InputFileSaveDir, strconv.FormatUint(uint64(rand.Int63()), 16))
+
+		f, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, lpr.daemon.fileMask)
+		if os.IsExist(err) {
+			if try++; try < 10000 {
+				continue
+			}
+			return nil, fmt.Errorf("error creating temporary file! Giving up after %d tries", try)
+		}
+		return f, err
+	}
+}
+
 // InterpretJobSubCommand interprets the job sub commands which are received after
 // the "02 - Receive a printer job" command was read
 func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) error {
@@ -507,7 +539,7 @@ func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) err
 		}
 		lpr.tempFilesize = lpr.Filesize
 
-		lpr.Output, err = ioutil.TempFile(lpr.daemon.InputFileSaveDir, "")
+		lpr.Output, err = lpr.createTempFile()
 		if err != nil {
 			return fmt.Errorf("Error while creating temporary file at %s! %s", lpr.daemon.InputFileSaveDir, err)
 		}
