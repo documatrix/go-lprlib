@@ -592,7 +592,6 @@ func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) err
 
 	/* H - Host name */
 	case 'H':
-		var err error
 		lpr.Hostname, _, err = lpr.daemon.ensureUTF8(data[1:length])
 		if err != nil {
 			return fmt.Errorf("invalid hostname %q: %v", lpr.Hostname, err)
@@ -625,7 +624,6 @@ func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) err
 
 	/* N - Name of source file */
 	case 'N':
-		var err error
 		lpr.Filename, _, err = lpr.daemon.ensureUTF8(data[1:length])
 		if err != nil {
 			return fmt.Errorf("invalid filename %q: %v", lpr.Filename, err)
