@@ -1,6 +1,7 @@
 package lprlib
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -21,12 +22,10 @@ func init() {
 
 // LprDaemon structure
 type LprDaemon struct {
+	finishedConns chan *LprConnection
 
-	/* All connections */
-	connections []*LprConnection
-
-	/* Used for closing the Listener */
-	closing chan bool
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	socket net.Listener
 
@@ -57,7 +56,8 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 
 	lpr.fileMask = 0600
 
-	lpr.closing = make(chan bool, 1)
+	lpr.ctx, lpr.cancel = context.WithCancel(context.Background())
+	lpr.finishedConns = make(chan *LprConnection, 100)
 
 	listenAddr := fmt.Sprintf(":%d", port)
 	logDebugf("Listening on: %s", listenAddr)
@@ -87,7 +87,7 @@ func (lpr *LprDaemon) Listen() {
 		newConn, err := lpr.socket.Accept()
 
 		select {
-		case <-lpr.closing:
+		case <-lpr.ctx.Done():
 			if newConn != nil {
 				newConn.Close()
 			}
@@ -101,46 +101,21 @@ func (lpr *LprDaemon) Listen() {
 		logDebug("Accepted Client")
 
 		var newLprcon LprConnection
-		newLprcon.Init(newConn, 0, lpr)
-
-		lpr.connections = append(lpr.connections, &newLprcon)
+		newLprcon.Init(newConn, 0, lpr, lpr.ctx)
 	}
-}
-
-// DelConnection deletes the LprConnection with the index
-func (lpr *LprDaemon) DelConnection(index uint64) {
-	var zeroValue *LprConnection
-	copy(lpr.connections[index:], lpr.connections[index+1:])
-	lpr.connections[len(lpr.connections)-1] = zeroValue
-	lpr.connections = lpr.connections[:len(lpr.connections)-1]
 }
 
 // Close Closes all LprConnections and the listener
 func (lpr *LprDaemon) Close() {
-	lpr.closing <- true
+	lpr.cancel()
 	lpr.socket.Close()
-	lpr.closing <- true
-	for _, iv := range lpr.connections {
-		iv.KillConnection()
-	}
 }
 
-// DelFinishedConnection deletes all connection with status END or ERROR
-func (lpr *LprDaemon) DelFinishedConnection() {
-	var bufferConnections []*LprConnection
-	var zeroValue []*LprConnection
-	bufferConnections = lpr.connections
-	lpr.connections = zeroValue
-	for i := 0; i < len(bufferConnections); i++ {
-		if bufferConnections[i].Status != END && bufferConnections[i].Status != ERROR {
-			lpr.connections = append(lpr.connections, bufferConnections[i])
-		}
-	}
-}
-
-// GetConnections returns all LprConnections
-func (lpr *LprDaemon) GetConnections() []*LprConnection {
-	return lpr.connections
+// FinishedConnections returns a channel containing the finished connections.
+// The ConnectionStatus may be END or ERROR.
+// Will also contain LPR Queue State requests (check with SaveName != "").
+func (lpr *LprDaemon) FinishedConnections() <-chan *LprConnection {
+	return lpr.finishedConns
 }
 
 type ConnectionStatus int16
@@ -222,8 +197,12 @@ type LprConnection struct {
 	// SaveName The File name of the new file
 	SaveName string
 
-	// closing Used for Closing the LprConnection
-	closing chan bool
+	// done is used to stop all go routines of the connection.
+	done chan bool
+
+	// ctx is the lpr daemon's context.
+	// The connection must be closed once the context is canceled.
+	ctx context.Context
 
 	// daemon contains a reference to the LprDaemon
 	daemon *LprDaemon
@@ -232,25 +211,37 @@ type LprConnection struct {
 // Init is the constructor of LprConnection
 // socet is the accepted connection
 // bufferSize is per default 8192
-func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDaemon) {
+func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDaemon, ctx context.Context) {
 	if bufferSize == 0 {
 		bufferSize = 8192
 	}
 	lpr.Connection = socket
 	lpr.BufferSize = bufferSize
-	lpr.closing = make(chan bool, 1)
+	lpr.done = make(chan bool)
 	lpr.daemon = daemon
-	go lpr.RunConnection()
-}
+	lpr.ctx = ctx
 
-// KillConnection Closes the Connection and the outputfile
-func (lpr *LprConnection) KillConnection() {
-	lpr.closing <- true
-	lpr.Connection.Close()
+	go func() {
+		select {
+		case <-ctx.Done():
+			err := lpr.Connection.Close()
+			if err != nil {
+				logErrorf("error closing connection: %v", err)
+			}
+		case <-lpr.done:
+		}
+	}()
+
+	go lpr.RunConnection()
 }
 
 // RunConnection This method read the data from the client
 func (lpr *LprConnection) RunConnection() {
+	defer func() {
+		close(lpr.done)
+		lpr.daemon.finishedConns <- lpr
+	}()
+
 	var inData bool
 	var buffer []uint8
 	var length int
@@ -275,7 +266,7 @@ func (lpr *LprConnection) RunConnection() {
 
 		length, err = lpr.Connection.Read(buffer)
 		select {
-		case <-lpr.closing:
+		case <-lpr.ctx.Done():
 			lpr.Status = ERROR
 			if lpr.Output != nil {
 				lpr.Output.Close()

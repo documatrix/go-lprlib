@@ -31,37 +31,26 @@ func TestDaemonSingleConnection(t *testing.T) {
 	fmt.Println("Tempfile:", name)
 
 	var lprd LprDaemon
-	var lprs LprSend
 
 	err = lprd.Init(port, "")
 	require.Nil(t, err)
 
-	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	err = Send(name, "127.0.0.1", port, "raw", "TestUser", time.Minute)
 	require.Nil(t, err)
 
-	err = lprs.SendConfiguration()
+	conn := <-lprd.FinishedConnections()
+
+	fi, err := os.Stat(conn.SaveName)
 	require.Nil(t, err)
+	require.Equal(t, fs.FileMode(0600), fi.Mode().Perm())
 
-	err = lprs.SendFile()
-	require.Nil(t, err)
-
-	time.Sleep(1 * time.Second)
-
-	allcon := lprd.GetConnections()
-
-	for _, iv := range allcon {
-		fi, err := os.Stat(iv.SaveName)
-		require.Nil(t, err)
-		require.Equal(t, fs.FileMode(0600), fi.Mode().Perm())
-
-		out, err = ioutil.ReadFile(iv.SaveName)
-		if err != nil {
-			t.Error(err)
-		} else {
-			os.Remove(iv.SaveName)
-			if text != string(out) {
-				t.Fail()
-			}
+	out, err = ioutil.ReadFile(conn.SaveName)
+	if err != nil {
+		t.Error(err)
+	} else {
+		os.Remove(conn.SaveName)
+		if text != string(out) {
+			t.Fail()
 		}
 	}
 
@@ -89,7 +78,6 @@ func TestDaemonChangeFilePermission(t *testing.T) {
 	fmt.Println("Tempfile:", name)
 
 	var lprd LprDaemon
-	var lprs LprSend
 
 	err = lprd.Init(port, "")
 	if err != nil {
@@ -100,44 +88,22 @@ func TestDaemonChangeFilePermission(t *testing.T) {
 
 	lprd.SetFileMask(0644)
 
-	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	err = Send(name, "127.0.0.1", port, "raw", "TestUser", time.Minute)
+	require.Nil(t, err)
+
+	conn := <-lprd.FinishedConnections()
+
+	fi, err := os.Stat(conn.SaveName)
+	require.Nil(t, err)
+	require.Equal(t, fs.FileMode(0644), fi.Mode().Perm())
+
+	out, err = ioutil.ReadFile(conn.SaveName)
 	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
-
-	err = lprs.SendConfiguration()
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
-
-	err = lprs.SendFile()
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
-
-	time.Sleep(1 * time.Second)
-
-	allcon := lprd.GetConnections()
-
-	for _, iv := range allcon {
-		fi, err := os.Stat(iv.SaveName)
-		require.Nil(t, err)
-		require.Equal(t, fs.FileMode(0644), fi.Mode().Perm())
-
-		out, err = ioutil.ReadFile(iv.SaveName)
-		if err != nil {
-			t.Error(err)
-		} else {
-			os.Remove(iv.SaveName)
-			if text != string(out) {
-				t.Fail()
-			}
+		t.Error(err)
+	} else {
+		os.Remove(conn.SaveName)
+		if text != string(out) {
+			t.Fail()
 		}
 	}
 
@@ -178,33 +144,22 @@ func TestDaemonLargeFileConnection(t *testing.T) {
 	fmt.Println("Tempfile:", name)
 
 	var lprd LprDaemon
-	var lprs LprSend
 
 	err = lprd.Init(port, "")
 	require.Nil(t, err)
 
-	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	err = Send(name, "127.0.0.1", port, "raw", "TestUser", time.Minute)
 	require.Nil(t, err)
 
-	err = lprs.SendConfiguration()
-	require.Nil(t, err)
+	conn := <-lprd.FinishedConnections()
 
-	err = lprs.SendFile()
-	require.Nil(t, err)
-
-	time.Sleep(5 * time.Second)
-
-	allcon := lprd.GetConnections()
-
-	for _, iv := range allcon {
-		out, err = ioutil.ReadFile(iv.SaveName)
-		if err != nil {
-			t.Error(err)
-		} else {
-			os.Remove(iv.SaveName)
-			if text != string(out) {
-				t.Fail()
-			}
+	out, err = ioutil.ReadFile(conn.SaveName)
+	if err != nil {
+		t.Error(err)
+	} else {
+		os.Remove(conn.SaveName)
+		if text != string(out) {
+			t.Fail()
 		}
 	}
 
@@ -279,17 +234,18 @@ func TestDaemonMultipleConnection(t *testing.T) {
 	err = lprs3.SendFile()
 	require.Nil(t, err)
 
-	time.Sleep(2 * time.Second)
+	require.Nil(t, lprs.Close())
+	require.Nil(t, lprs2.Close())
+	require.Nil(t, lprs3.Close())
 
-	allcon := lprd.GetConnections()
-
-	for _, iv := range allcon {
-		out, err = ioutil.ReadFile(iv.SaveName)
+	i := 0
+	for conn := range lprd.FinishedConnections() {
+		out, err = ioutil.ReadFile(conn.SaveName)
 		if err != nil {
 			t.Error(err)
 		} else {
-			os.Remove(iv.SaveName)
-			require.Equal(t, iv.UserIdentification, "TestUser")
+			os.Remove(conn.SaveName)
+			require.Equal(t, conn.UserIdentification, "TestUser")
 			switch string(out) {
 			case text1:
 				fcount |= 0x1
@@ -300,6 +256,11 @@ func TestDaemonMultipleConnection(t *testing.T) {
 			default:
 				t.Fail()
 			}
+		}
+
+		i++
+		if i >= 3 {
+			break
 		}
 	}
 
@@ -374,6 +335,13 @@ func TestDaemonTimeout(t *testing.T) {
 	err = lprs.SendFile()
 	require.NotNil(t, err)
 	require.True(t, strings.Contains(err.Error(), "timeout"))
+
+	err = lprs.Close()
+	require.Nil(t, err)
+
+	conn := <-lprd.FinishedConnections()
+	require.Empty(t, conn.SaveName)
+	require.Equal(t, ERROR, conn.Status)
 }
 
 func TestDaemonInputFileSaveDirSetting(t *testing.T) {
@@ -394,43 +362,58 @@ func TestDaemonInputFileSaveDirSetting(t *testing.T) {
 	defer os.Remove(name)
 	require.Nil(t, err)
 
-	var lprs LprSend
-	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	err = Send(name, "127.0.0.1", port, "raw", "TestUser", time.Minute)
+	require.Nil(t, err)
+
+	conn := <-lprd.FinishedConnections()
+
+	require.Equal(t, inputFileSaveDir, filepath.Dir(conn.SaveName))
+
+	out, err := ioutil.ReadFile(conn.SaveName)
 	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
-
-	err = lprs.SendConfiguration()
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
-
-	err = lprs.SendFile()
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-		return
-	}
-
-	for _, iv := range lprd.GetConnections() {
-
-		require.Equal(t, inputFileSaveDir, filepath.Dir(iv.SaveName))
-
-		out, err := ioutil.ReadFile(iv.SaveName)
-		if err != nil {
-			t.Error(err)
-		} else {
-			os.Remove(iv.SaveName)
-			if text != string(out) {
-				t.Fail()
-			}
+		t.Error(err)
+	} else {
+		os.Remove(conn.SaveName)
+		if text != string(out) {
+			t.Fail()
 		}
 	}
+}
 
+func TestDaemonClose(t *testing.T) {
+	var lprd LprDaemon
+
+	port := uint16(2345)
+	err := lprd.Init(port, "")
+	require.Nil(t, err)
+
+	name, err := generateTempFile("", "", "Text for the file")
+	defer os.Remove(name)
+	require.Nil(t, err)
+
+	var lprs LprSend
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	require.Nil(t, err)
+
+	err = lprs.SendConfiguration()
+	require.Nil(t, err)
+
+	lprd.Close()
+
+	err = lprs.SendFile()
+	require.NotNil(t, err)
+
+	err = lprs.Close()
+	require.Nil(t, err)
+
+	// connection must have error state
+	conn := <-lprd.FinishedConnections()
+	require.Equal(t, ERROR, conn.Status)
+
+	// no new connection may be opened
+	lprs = LprSend{}
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	require.NotNil(t, err)
 }
 
 func TestDaemonFileSize(t *testing.T) {
@@ -469,19 +452,13 @@ func TestDaemonFileSize(t *testing.T) {
 	err = lprs.Close()
 	require.Nil(t, err)
 
-	time.Sleep(1 * time.Second)
-
-	connections := lprd.GetConnections()
-
-	require.Equal(t, 1, len(connections))
-	con := connections[0]
+	con := <-lprd.FinishedConnections()
 	require.Equal(t, END, con.Status)
 	out, err = ioutil.ReadFile(con.SaveName)
 	require.Nil(t, err)
 	err = os.Remove(con.SaveName)
 	require.Nil(t, err)
 	require.Equal(t, text, string(out))
-	lprd.DelFinishedConnection()
 
 	// send file with size 0
 	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
@@ -497,19 +474,13 @@ func TestDaemonFileSize(t *testing.T) {
 	err = lprs.Close()
 	require.Nil(t, err)
 
-	time.Sleep(1 * time.Second)
-
-	connections = lprd.GetConnections()
-
-	require.Equal(t, 1, len(connections))
-	con = connections[0]
+	con = <-lprd.FinishedConnections()
 	require.Equal(t, END, con.Status)
 	out, err = ioutil.ReadFile(con.SaveName)
 	require.Nil(t, err)
 	err = os.Remove(con.SaveName)
 	require.Nil(t, err)
 	require.Equal(t, text, string(out))
-	lprd.DelFinishedConnection()
 
 	// send file with incorrect size greater than 2GB
 	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
@@ -525,19 +496,13 @@ func TestDaemonFileSize(t *testing.T) {
 	err = lprs.Close()
 	require.Nil(t, err)
 
-	time.Sleep(1 * time.Second)
-
-	connections = lprd.GetConnections()
-
-	require.Equal(t, 1, len(connections))
-	con = connections[0]
+	con = <-lprd.FinishedConnections()
 	require.Equal(t, END, con.Status)
 	out, err = ioutil.ReadFile(con.SaveName)
 	require.Nil(t, err)
 	err = os.Remove(con.SaveName)
 	require.Nil(t, err)
 	require.Equal(t, text, string(out))
-	lprd.DelFinishedConnection()
 
 	// send file with incorrect size
 	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Second*2)
@@ -553,12 +518,7 @@ func TestDaemonFileSize(t *testing.T) {
 	err = lprs.Close()
 	require.Nil(t, err)
 
-	time.Sleep(1 * time.Second)
-
-	connections = lprd.GetConnections()
-
-	require.Equal(t, 1, len(connections))
-	con = connections[0]
+	con = <-lprd.FinishedConnections()
 	require.Equal(t, ERROR, con.Status)
 	err = os.Remove(con.SaveName)
 	require.Nil(t, err)
@@ -604,19 +564,13 @@ func TestDaemonSubCommandOrder(t *testing.T) {
 	err = lprs.Close()
 	require.Nil(t, err)
 
-	time.Sleep(1 * time.Second)
-
-	connections := lprd.GetConnections()
-
-	require.Equal(t, 1, len(connections))
-	con := connections[0]
+	con := <-lprd.FinishedConnections()
 	require.Equal(t, END, con.Status)
 	out, err = ioutil.ReadFile(con.SaveName)
 	require.Nil(t, err)
 	err = os.Remove(con.SaveName)
 	require.Nil(t, err)
 	require.Equal(t, text, string(out))
-	lprd.DelFinishedConnection()
 
 	lprd.Close()
 	os.Remove(name)

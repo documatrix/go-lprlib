@@ -41,17 +41,12 @@ func TestSend(t *testing.T) {
 	err = Send(file, "127.0.0.1", port, "raw", "TestUser", time.Minute)
 	require.Nil(t, err)
 
-	time.Sleep(1 * time.Second)
-
-	allcon := lprd.GetConnections()
-
-	for _, iv := range allcon {
-		out, err := ioutil.ReadFile(iv.SaveName)
-		require.Nil(t, err)
-		os.Remove(iv.SaveName)
-		require.Equal(t, iv.UserIdentification, "TestUser")
-		require.Equal(t, text, string(out))
-	}
+	conn := <-lprd.FinishedConnections()
+	out, err := ioutil.ReadFile(conn.SaveName)
+	require.Nil(t, err)
+	os.Remove(conn.SaveName)
+	require.Equal(t, conn.UserIdentification, "TestUser")
+	require.Equal(t, text, string(out))
 
 	time.Sleep(time.Second)
 

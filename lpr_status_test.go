@@ -50,14 +50,15 @@ func TestGetStatus(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, longQueueState, status)
 
-	time.Sleep(1 * time.Second)
+	i := 0
+	for conn := range lprd.FinishedConnections() {
+		require.Equal(t, END, conn.Status)
+		require.Empty(t, conn.SaveName)
 
-	allcon := lprd.GetConnections()
-	require.Equal(t, 3, len(allcon))
-
-	for _, iv := range allcon {
-		require.Equal(t, END, iv.Status)
-		require.Empty(t, iv.SaveName)
+		i++
+		if i >= 3 {
+			break
+		}
 	}
 
 	lprd.Close()
