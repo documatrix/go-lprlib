@@ -12,6 +12,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/ianaindex"
 )
 
 type QueueState func(queue string, list string, long bool) string
@@ -42,16 +46,22 @@ type LprDaemon struct {
 	// The trace file will be saved into the InputFileSaveDir or system temp directory.
 	Trace bool
 
+	fallbackDecoder *encoding.Decoder
+
 	fileMask os.FileMode
 }
 
 // Init is the constructor
-// port ist the tcp port where the deamon should listen default 515
-// ipAddress of the deamon default own ip
+// port ist the tcp port where the daemon should listen default 515
+// ipAddress of the daemon default own ip
 func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 
 	if port == 0 {
 		port = 515
+	}
+
+	if err := lpr.SetFallbackEncoding("windows-1252"); err != nil {
+		return err
 	}
 
 	lpr.fileMask = 0600
@@ -77,6 +87,21 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 // data file which is written by new connections.
 func (lpr *LprDaemon) SetFileMask(fileMask os.FileMode) {
 	lpr.fileMask = fileMask
+}
+
+// SetFallbackEncoding sets the given encoding as fallback encoding.
+// Will be used to decode any received non-utf8 string values like Filename, PrqName, UserIdentification, etc.
+// Will not be applied to any received file contents.
+// Defaults to windows-1252.
+func (lpr *LprDaemon) SetFallbackEncoding(encodingName string) error {
+	encoding, err := ianaindex.IANA.Encoding(encodingName)
+	if err != nil {
+		return err
+	}
+
+	lpr.fallbackDecoder = encoding.NewDecoder()
+
+	return nil
 }
 
 // Listen waits for a new connection and accept them
@@ -116,6 +141,21 @@ func (lpr *LprDaemon) Close() {
 // Will also contain LPR Queue State requests (check with SaveName != "").
 func (lpr *LprDaemon) FinishedConnections() <-chan *LprConnection {
 	return lpr.finishedConns
+}
+
+// ensureUTF8 checks if the given value contains valid UTF-8 encoded runes.
+// If not, the function tries to decode the given value using the fallbackDecoder.
+func (lpr *LprDaemon) ensureUTF8(value []byte) (string, bool, error) {
+	valid := utf8.Valid(value)
+	if !valid {
+		decodedValue, err := lpr.fallbackDecoder.Bytes(value)
+		if err != nil {
+			return string(value), valid, err
+		}
+		value = decodedValue
+	}
+
+	return string(value), valid, nil
 }
 
 type ConnectionStatus int16
@@ -209,7 +249,7 @@ type LprConnection struct {
 }
 
 // Init is the constructor of LprConnection
-// socet is the accepted connection
+// socket is the accepted connection
 // bufferSize is per default 8192
 func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDaemon, ctx context.Context) {
 	if bufferSize == 0 {
@@ -439,7 +479,7 @@ func (lpr *LprConnection) AddToFile(data []uint8, length int64) {
 }
 
 // Interpret interprets the LPR daemon commands
-func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
+func (lpr *LprConnection) Interpret(data []uint8, length int64) {
 	firstSymbol := data[0]
 	switch firstSymbol {
 	/* Daemon commands */
@@ -448,7 +488,11 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
 
 	/* 02 - Receive a printer job */
 	case 0x2:
-		lpr.PrqName = string(data[1:length])
+		var err error
+		lpr.PrqName, _, err = lpr.daemon.ensureUTF8(data[1:length])
+		if err != nil {
+			logErrorf("Invalid printer queue name %q: %v", lpr.PrqName, err)
+		}
 		lpr.Status = PRINTJOB_SUB_COMMANDS
 
 	/* 03 - Send queue state (short) */
@@ -477,8 +521,6 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) error {
 		logErrorf("Unknown Code: %s", string(data[:length]))
 		break
 	}
-
-	return nil
 }
 
 func (lpr *LprConnection) createTempFile() (*os.File, error) {
@@ -542,12 +584,18 @@ func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) err
 
 	/* C - Class for banner page */
 	case 'C':
-		lpr.ClassName = string(data[1:length])
+		lpr.ClassName, _, err = lpr.daemon.ensureUTF8(data[1:length])
+		if err != nil {
+			return fmt.Errorf("invalid class name %q: %v", lpr.ClassName, err)
+		}
 		logDebugf("Class name: %s", lpr.ClassName)
 
 	/* H - Host name */
 	case 'H':
-		lpr.Hostname = string(data[1:length])
+		lpr.Hostname, _, err = lpr.daemon.ensureUTF8(data[1:length])
+		if err != nil {
+			return fmt.Errorf("invalid hostname %q: %v", lpr.Hostname, err)
+		}
 		logDebugf("Hostname: %s", lpr.Hostname)
 
 	/* I - Indent Printing */
@@ -560,7 +608,10 @@ func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) err
 
 	/* J - Job name for banner page */
 	case 'J':
-		lpr.JobName = string(data[1:length])
+		lpr.JobName, _, err = lpr.daemon.ensureUTF8(data[1:length])
+		if err != nil {
+			return fmt.Errorf("invalid job name %q: %v", lpr.JobName, err)
+		}
 		logDebugf("Job name: %s", lpr.JobName)
 
 	/* L - Print banner page */
@@ -573,12 +624,18 @@ func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) err
 
 	/* N - Name of source file */
 	case 'N':
-		lpr.Filename = string(data[1:length])
+		lpr.Filename, _, err = lpr.daemon.ensureUTF8(data[1:length])
+		if err != nil {
+			return fmt.Errorf("invalid filename %q: %v", lpr.Filename, err)
+		}
 		logDebugf("Filename: %s", lpr.Filename)
 
 	/* P - User identification */
 	case 'P':
-		lpr.UserIdentification = string(data[1:length])
+		lpr.UserIdentification, _, err = lpr.daemon.ensureUTF8(data[1:length])
+		if err != nil {
+			return fmt.Errorf("invalid user identification %q: %v", lpr.UserIdentification, err)
+		}
 		logDebugf("User identification: %s", lpr.UserIdentification)
 
 	/* S - Symbolic link data */
@@ -586,7 +643,10 @@ func (lpr *LprConnection) InterpretJobSubCommand(data []uint8, length int64) err
 
 	/* T - Title for pr */
 	case 'T':
-		lpr.TitleText = string(data[1:length])
+		lpr.TitleText, _, err = lpr.daemon.ensureUTF8(data[1:length])
+		if err != nil {
+			return fmt.Errorf("invalid title text %q: %v", lpr.TitleText, err)
+		}
 		logDebugf("Title text: %s", lpr.TitleText)
 
 	/* U - Unlink data file */
