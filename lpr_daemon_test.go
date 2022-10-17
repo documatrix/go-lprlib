@@ -35,11 +35,13 @@ func TestDaemonSingleConnection(t *testing.T) {
 	err = lprd.Init(port, "")
 	require.Nil(t, err)
 
-	err = Send(name, "127.0.0.1", port, "raw", "TestUser", time.Minute)
+	err = Send(name, "127.0.0.1", port, "r\xE4w", "TestÜser", time.Minute)
 	require.Nil(t, err)
 
 	conn := <-lprd.FinishedConnections()
 
+	require.Equal(t, "räw", conn.PrqName)
+	require.Equal(t, "TestÜser", conn.UserIdentification)
 	fi, err := os.Stat(conn.SaveName)
 	require.Nil(t, err)
 	require.Equal(t, fs.FileMode(0600), fi.Mode().Perm())
@@ -574,4 +576,81 @@ func TestDaemonSubCommandOrder(t *testing.T) {
 
 	lprd.Close()
 	os.Remove(name)
+}
+
+func TestCheckForUTF8StringEncoding(t *testing.T) {
+	tests := []struct {
+		name        string
+		value       string
+		valid       bool
+		result      string
+		encoding    string
+		expectError bool
+	}{
+		{
+			name:        "UTF8-1",
+			value:       "One2three",
+			expectError: false,
+			valid:       true,
+			encoding:    "windows-1252",
+			result:      "One2three",
+		},
+		{
+			name:        "UTF8-2",
+			value:       "ÄnsZwäDrä",
+			expectError: false,
+			valid:       true,
+			encoding:    "windows-1252",
+			result:      "ÄnsZwäDrä",
+		},
+		{
+			name:        "UTF8-3",
+			value:       "”ÄnsZ“w!äDrä",
+			expectError: false,
+			valid:       true,
+			encoding:    "windows-1252",
+			result:      "”ÄnsZ“w!äDrä",
+		},
+		{
+			name:        "Windows1252-1",
+			value:       "result-file-" + string([]byte{0xff, 0xfe, 0xfd}) + ".c",
+			expectError: false,
+			valid:       false,
+			encoding:    "windows-1252",
+			result:      "result-file-ÿþý.c",
+		},
+		{
+			name:        "Windows1252-2",
+			value:       "result-file-" + string([]byte{0x81}) + ".c",
+			expectError: false,
+			valid:       false,
+			encoding:    "windows-1252",
+			result:      "result-file-�.c",
+		},
+		{
+			name:        "Windows1251-1",
+			value:       "cyrillic-" + string([]byte{0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0x98}) + "�",
+			expectError: false,
+			valid:       false,
+			encoding:    "windows-1251",
+			result:      "cyrillic-ФХЦЧШЩ�пїЅ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			daemon := LprDaemon{}
+			err := daemon.SetFallbackEncoding(tt.encoding)
+			require.Nil(t, err)
+
+			result, valid, err := daemon.ensureUTF8([]byte(tt.value))
+			if tt.expectError {
+				require.NotNil(t, err)
+			} else {
+				require.Nil(t, err)
+			}
+			require.Equal(t, tt.valid, valid)
+			require.Equal(t, tt.result, result)
+		})
+	}
 }
