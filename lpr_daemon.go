@@ -18,7 +18,20 @@ import (
 	"golang.org/x/text/encoding/ianaindex"
 )
 
+type ConnectionType int
+
+const (
+	ConnectionTypePrintAnyWaitingJobs ConnectionType = 0
+	ConnectionTypeReceivePrintJob     ConnectionType = 1
+	ConnectionTypeSendQueueStateShort ConnectionType = 2
+	ConnectionTypeSendQueueStateLog   ConnectionType = 3
+	ConnectionTypeRemoveJobs          ConnectionType = 4
+	ConnectionTypeUnknown             ConnectionType = 5
+)
+
 type QueueState func(queue string, list string, long bool) string
+
+type ExternalIDCallbackFunc func() (uint64, error)
 
 func init() {
 	rand.Seed(time.Now().UnixMicro())
@@ -27,6 +40,7 @@ func init() {
 // LprDaemon structure
 type LprDaemon struct {
 	finishedConns chan *LprConnection
+	connections   chan *LprConnection
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -49,6 +63,8 @@ type LprDaemon struct {
 	fallbackDecoder *encoding.Decoder
 
 	fileMask os.FileMode
+
+	GetExternalID ExternalIDCallbackFunc
 }
 
 // Init is the constructor
@@ -68,6 +84,7 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 
 	lpr.ctx, lpr.cancel = context.WithCancel(context.Background())
 	lpr.finishedConns = make(chan *LprConnection, 100)
+	lpr.connections = make(chan *LprConnection, 100)
 
 	listenAddr := fmt.Sprintf(":%d", port)
 	logDebugf("Listening on: %s", listenAddr)
@@ -78,9 +95,42 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 		return &LprError{"Can't listen to " + listenAddr + " : " + err.Error()}
 	}
 
+	go lpr.externalIDGenerator()
 	go lpr.Listen()
 
 	return nil
+}
+
+func (lpr *LprDaemon) externalIDGenerator() {
+	for {
+		select {
+		case conn := <-lpr.connections:
+			lpr.generateExternalID(conn)
+		case <-lpr.ctx.Done():
+			// quit id generator routine
+			return
+		}
+	}
+}
+
+func (lpr *LprDaemon) generateExternalID(conn *LprConnection) {
+	defer close(conn.externalIDChan)
+
+	connectionType := <-conn.typeChan
+	if connectionType != ConnectionTypeReceivePrintJob {
+		return
+	}
+
+	extID := uint64(0)
+	if lpr.GetExternalID != nil {
+		var err error
+		extID, err = lpr.GetExternalID()
+		if err != nil {
+			conn.externalIDErrorChan <- err
+			// TODO externalIDErrorChan unused... thing through
+		}
+	}
+	conn.externalIDChan <- extID
 }
 
 // SetFileMask can be used to set the file mask which should be applied to the
@@ -126,7 +176,7 @@ func (lpr *LprDaemon) Listen() {
 		logDebug("Accepted Client")
 
 		var newLprcon LprConnection
-		newLprcon.Init(newConn, 0, lpr, lpr.ctx)
+		newLprcon.Init(newConn, 0, lpr, lpr.ctx, lpr.GetExternalID)
 	}
 }
 
@@ -246,12 +296,19 @@ type LprConnection struct {
 
 	// daemon contains a reference to the LprDaemon
 	daemon *LprDaemon
+
+	// ExternalID describes a reference of a print job id
+	ExternalID uint64
+
+	typeChan            chan ConnectionType
+	externalIDChan      chan uint64
+	externalIDErrorChan chan error
 }
 
 // Init is the constructor of LprConnection
 // socket is the accepted connection
 // bufferSize is per default 8192
-func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDaemon, ctx context.Context) {
+func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDaemon, ctx context.Context, getExternalID ExternalIDCallbackFunc) {
 	if bufferSize == 0 {
 		bufferSize = 8192
 	}
@@ -260,6 +317,11 @@ func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDae
 	lpr.done = make(chan bool)
 	lpr.daemon = daemon
 	lpr.ctx = ctx
+	lpr.typeChan = make(chan ConnectionType, 1)
+	lpr.externalIDChan = make(chan uint64, 1)
+	lpr.externalIDErrorChan = make(chan error, 1)
+
+	daemon.connections <- lpr
 
 	go func() {
 		select {
@@ -279,6 +341,11 @@ func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDae
 func (lpr *LprConnection) RunConnection() {
 	defer func() {
 		close(lpr.done)
+		close(lpr.typeChan)
+		select {
+		case lpr.ExternalID = <-lpr.externalIDChan:
+		case <-lpr.ctx.Done():
+		}
 		lpr.daemon.finishedConns <- lpr
 	}()
 
@@ -485,9 +552,11 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) {
 	/* Daemon commands */
 	/* 01 - Print any waiting jobs */
 	case 0x1:
+		lpr.typeChan <- ConnectionTypePrintAnyWaitingJobs
 
 	/* 02 - Receive a printer job */
 	case 0x2:
+		lpr.typeChan <- ConnectionTypeReceivePrintJob
 		var err error
 		lpr.PrqName, _, err = lpr.daemon.ensureUTF8(data[1:length])
 		if err != nil {
@@ -498,11 +567,13 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) {
 	/* 03 - Send queue state (short) */
 	/* | 03 | Queue | SP | List | LF | */
 	case 0x3:
+		lpr.typeChan <- ConnectionTypeSendQueueStateShort
 		fallthrough
 
 	/* 04 - Send queue state (long) */
 	/* | 04 | Queue | SP | List | LF | */
 	case 0x4:
+		lpr.typeChan <- ConnectionTypeSendQueueStateLog
 		content := string(data[1:length])
 		parts := strings.SplitN(content, " ", 2)
 		queue := parts[0]
@@ -515,8 +586,10 @@ func (lpr *LprConnection) Interpret(data []uint8, length int64) {
 
 	/* 05 - Remove jobs */
 	case 0x5:
+		lpr.typeChan <- ConnectionTypeRemoveJobs
 
 	default:
+		lpr.typeChan <- ConnectionTypeUnknown
 		logErrorf("First Element: %02x (%c)", data[0], data[0])
 		logErrorf("Unknown Code: %s", string(data[:length]))
 		break
