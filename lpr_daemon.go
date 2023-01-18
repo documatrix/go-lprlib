@@ -30,7 +30,7 @@ const (
 
 type QueueState func(queue string, list string, long bool) string
 
-type ExternalIDCallbackFunc func() (uint64, error)
+type ExternalIDCallbackFunc func() uint64
 
 func init() {
 	rand.Seed(time.Now().UnixMicro())
@@ -122,12 +122,7 @@ func (lpr *LprDaemon) generateExternalID(conn *LprConnection) {
 
 	extID := uint64(0)
 	if lpr.GetExternalID != nil {
-		var err error
-		extID, err = lpr.GetExternalID()
-		if err != nil {
-			conn.externalIDErrorChan <- err
-			// TODO externalIDErrorChan unused... thing through
-		}
+		extID = lpr.GetExternalID()
 	}
 	conn.externalIDChan <- extID
 }
@@ -295,9 +290,8 @@ type LprConnection struct {
 	// ExternalID describes a reference of a print job id
 	ExternalID uint64
 
-	typeChan            chan ConnectionType
-	externalIDChan      chan uint64
-	externalIDErrorChan chan error
+	typeChan       chan ConnectionType
+	externalIDChan chan uint64
 }
 
 // Init is the constructor of LprConnection
@@ -316,7 +310,6 @@ func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDae
 	lpr.ctx = ctx
 	lpr.typeChan = make(chan ConnectionType, 1)
 	lpr.externalIDChan = make(chan uint64, 1)
-	lpr.externalIDErrorChan = make(chan error, 1)
 
 	daemon.connections <- lpr
 
