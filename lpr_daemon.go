@@ -23,7 +23,7 @@ const (
 	ConnectionTypePrintAnyWaitingJobs ConnectionType = 0
 	ConnectionTypeReceivePrintJob     ConnectionType = 1
 	ConnectionTypeSendQueueStateShort ConnectionType = 2
-	ConnectionTypeSendQueueStateLog   ConnectionType = 3
+	ConnectionTypeSendQueueStateLong  ConnectionType = 3
 	ConnectionTypeRemoveJobs          ConnectionType = 4
 	ConnectionTypeUnknown             ConnectionType = 5
 )
@@ -505,20 +505,13 @@ func (lpr *LprConnection) parseDaemonCommand(command []byte) error {
 	/* | 03 | Queue | SP | List | LF | */
 	case 0x3:
 		lpr.typeChan <- ConnectionTypeSendQueueStateShort
-		fallthrough
+		return lpr.sendQueueState(command, false)
 
 	/* 04 - Send queue state (long) */
 	/* | 04 | Queue | SP | List | LF | */
 	case 0x4:
-		lpr.typeChan <- ConnectionTypeSendQueueStateLog
-		parts := operands(command[1:], 2)
-		queue := parts[0]
-		list := ""
-		if len(parts) > 1 {
-			list = parts[1]
-		}
-
-		lpr.replyQueueState(queue, list, firstSymbol == 0x4)
+		lpr.typeChan <- ConnectionTypeSendQueueStateLong
+		return lpr.sendQueueState(command, true)
 
 	/* 05 - Remove jobs */
 	case 0x5:
@@ -531,6 +524,17 @@ func (lpr *LprConnection) parseDaemonCommand(command []byte) error {
 	}
 
 	return nil
+}
+
+func (lpr *LprConnection) sendQueueState(command []byte, long bool) error {
+	parts := operands(command[1:], 2)
+	queue := parts[0]
+	list := ""
+	if len(parts) > 1 {
+		list = parts[1]
+	}
+
+	return lpr.replyQueueState(queue, list, long)
 }
 
 var asciiSpace = [256]byte{' ': 1, '\t': 1, '\v': 1, '\f': 1}
