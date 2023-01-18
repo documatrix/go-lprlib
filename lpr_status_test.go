@@ -52,7 +52,7 @@ func TestGetStatus(t *testing.T) {
 
 	i := 0
 	for conn := range lprd.FinishedConnections() {
-		require.Equal(t, END, conn.Status)
+		require.Equal(t, End, conn.Status)
 		require.Empty(t, conn.SaveName)
 
 		i++

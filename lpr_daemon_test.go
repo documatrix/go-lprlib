@@ -343,7 +343,7 @@ func TestDaemonTimeout(t *testing.T) {
 
 	conn := <-lprd.FinishedConnections()
 	require.Empty(t, conn.SaveName)
-	require.Equal(t, ERROR, conn.Status)
+	require.Equal(t, Error, conn.Status)
 }
 
 func TestDaemonInputFileSaveDirSetting(t *testing.T) {
@@ -410,7 +410,7 @@ func TestDaemonClose(t *testing.T) {
 
 	// connection must have error state
 	conn := <-lprd.FinishedConnections()
-	require.Equal(t, ERROR, conn.Status)
+	require.Equal(t, Error, conn.Status)
 
 	// no new connection may be opened
 	lprs = LprSend{}
@@ -455,7 +455,7 @@ func TestDaemonFileSize(t *testing.T) {
 	require.Nil(t, err)
 
 	con := <-lprd.FinishedConnections()
-	require.Equal(t, END, con.Status)
+	require.Equal(t, End, con.Status)
 	out, err = ioutil.ReadFile(con.SaveName)
 	require.Nil(t, err)
 	err = os.Remove(con.SaveName)
@@ -477,7 +477,7 @@ func TestDaemonFileSize(t *testing.T) {
 	require.Nil(t, err)
 
 	con = <-lprd.FinishedConnections()
-	require.Equal(t, END, con.Status)
+	require.Equal(t, End, con.Status)
 	out, err = ioutil.ReadFile(con.SaveName)
 	require.Nil(t, err)
 	err = os.Remove(con.SaveName)
@@ -499,7 +499,7 @@ func TestDaemonFileSize(t *testing.T) {
 	require.Nil(t, err)
 
 	con = <-lprd.FinishedConnections()
-	require.Equal(t, END, con.Status)
+	require.Equal(t, End, con.Status)
 	out, err = ioutil.ReadFile(con.SaveName)
 	require.Nil(t, err)
 	err = os.Remove(con.SaveName)
@@ -521,7 +521,7 @@ func TestDaemonFileSize(t *testing.T) {
 	require.Nil(t, err)
 
 	con = <-lprd.FinishedConnections()
-	require.Equal(t, ERROR, con.Status)
+	require.Equal(t, Error, con.Status)
 	err = os.Remove(con.SaveName)
 	require.Nil(t, err)
 
@@ -567,7 +567,7 @@ func TestDaemonSubCommandOrder(t *testing.T) {
 	require.Nil(t, err)
 
 	con := <-lprd.FinishedConnections()
-	require.Equal(t, END, con.Status)
+	require.Equal(t, End, con.Status)
 	out, err = ioutil.ReadFile(con.SaveName)
 	require.Nil(t, err)
 	err = os.Remove(con.SaveName)

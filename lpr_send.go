@@ -57,6 +57,7 @@ type LprSend struct {
 // If lpr.MaxSize isn't set yet then it is 16*1024
 // The port is per default 515
 func (lpr *LprSend) Init(hostname, filePath string, port uint16, queue string, username string, timeout time.Duration) error {
+	lpr.printJobStarted = false
 
 	// init const
 	if lpr.MaxSize == 0 {
