@@ -647,7 +647,12 @@ func (lpr *LprConnection) receiveControlFile(fileName string, bytes uint64) erro
 
 	line := []byte{}
 
-	for _, b := range buffer {
+	lastByte := buffer[len(buffer)-1]
+	if lastByte != 0 {
+		return fmt.Errorf("control file does not end with 0x00 but %02x :: %s", lastByte, string(buffer))
+	}
+
+	for _, b := range buffer[:len(buffer)-1] {
 		if b == '\n' {
 			// end of control file line
 			err = lpr.parseControlFileLine(line)
@@ -659,6 +664,10 @@ func (lpr *LprConnection) receiveControlFile(fileName string, bytes uint64) erro
 		} else {
 			line = append(line, b)
 		}
+	}
+
+	if len(line) > 0 {
+		return fmt.Errorf("garbage at end of control file: %s", string(line))
 	}
 
 	return nil
