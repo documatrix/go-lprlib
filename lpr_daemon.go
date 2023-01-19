@@ -512,7 +512,7 @@ func (lpr *LprConnection) parseDaemonCommand(command []byte) error {
 
 	default:
 		lpr.typeChan <- ConnectionTypeUnknown
-		return fmt.Errorf("unknown Daemon command %02x (%c) :: %s", command[0], command[0], string(command))
+		return fmt.Errorf("unknown daemon command %02x (%c): %s", command[0], command[0], string(command))
 
 	}
 
@@ -642,7 +642,7 @@ func (lpr *LprConnection) receiveControlFile(fileName string, bytes uint64) erro
 
 	lastByte := buffer[len(buffer)-1]
 	if lastByte != 0 {
-		return fmt.Errorf("control file does not end with 0x00 but %02x :: %s", lastByte, string(buffer))
+		return fmt.Errorf("control file does not end with 0x00 but %02x: %s", lastByte, string(buffer))
 	}
 
 	for _, b := range buffer[:len(buffer)-1] {
@@ -793,7 +793,7 @@ func (lpr *LprConnection) parseControlFileLine(line []byte) error {
 	case 0x00:
 
 	default:
-		return fmt.Errorf("unknown control file line %02x (%c) :: %s", line[0], line[0], string(line))
+		return fmt.Errorf("unknown control file line %02x (%c): %s", line[0], line[0], string(line))
 
 	}
 
