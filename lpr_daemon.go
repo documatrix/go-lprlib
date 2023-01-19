@@ -170,7 +170,7 @@ func (lpr *LprDaemon) Listen() {
 		logDebug("Accepted Client")
 
 		var newLprcon LprConnection
-		newLprcon.Init(newConn, 0, lpr, lpr.ctx, lpr.GetExternalID)
+		newLprcon.Init(newConn, 0, lpr, lpr.ctx)
 	}
 }
 
@@ -297,7 +297,7 @@ type LprConnection struct {
 // Init is the constructor of LprConnection
 // socket is the accepted connection
 // bufferSize is per default 8192
-func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDaemon, ctx context.Context, getExternalID ExternalIDCallbackFunc) {
+func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDaemon, ctx context.Context) {
 	if bufferSize == 0 {
 		bufferSize = 8192
 	}
@@ -538,11 +538,11 @@ func operands(data []byte, max int) []string {
 	oper := []byte{}
 	for i, b := range data {
 		if asciiSpace[b] == 1 {
-			opers = append(opers, string(oper))
-
 			if len(opers) == max {
-				return append(opers, string(data[i+1:]))
+				return append(opers, string(oper)+string(data[i:]))
 			}
+
+			opers = append(opers, string(oper))
 
 			oper = []byte{}
 		} else {
@@ -875,6 +875,7 @@ func (lpr *LprConnection) addToFile(data []uint8) (bool, error) {
 
 	} else {
 		data = data[:lpr.tempFilesize]
+		lpr.tempFilesize = lpr.tempFilesize - int64(len(data))
 
 		end = true
 	}
@@ -886,10 +887,14 @@ func (lpr *LprConnection) addToFile(data []uint8) (bool, error) {
 
 	if end {
 		if lpr.Output != nil {
-			lpr.Output.Close()
+			err = lpr.Output.Close()
+			if err != nil {
+				return false, fmt.Errorf("error closing output file %q: %w", lpr.Output.Name(), err)
+			}
+
 			lpr.Output = nil
 		}
-		lpr.tempFilesize = lpr.tempFilesize - int64(len(data))
+
 		lpr.Status = JobSubCommand
 	}
 
