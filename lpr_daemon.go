@@ -886,14 +886,12 @@ func (lpr *LprConnection) addToFile(data []uint8) (bool, error) {
 	}
 
 	if end {
-		if lpr.Output != nil {
-			err = lpr.Output.Close()
-			if err != nil {
-				return false, fmt.Errorf("error closing output file %q: %w", lpr.Output.Name(), err)
-			}
-
-			lpr.Output = nil
+		err = lpr.Output.Close()
+		if err != nil {
+			return false, fmt.Errorf("error closing output file %q: %w", lpr.Output.Name(), err)
 		}
+
+		lpr.Output = nil
 
 		lpr.Status = JobSubCommand
 	}
