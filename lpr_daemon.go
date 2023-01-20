@@ -538,7 +538,7 @@ func operands(data []byte, max int) []string {
 	oper := []byte{}
 	for i, b := range data {
 		if asciiSpace[b] == 1 {
-			if len(opers) == max {
+			if len(opers) == max-1 {
 				return append(opers, string(oper)+string(data[i:]))
 			}
 
