@@ -223,8 +223,8 @@ type LprConnection struct {
 	// buffer contains read data from the socket
 	buffer []uint8
 
-	// tempFilesize the aktuell filesize ( it shows how many chars are left )
-	tempFilesize int64
+	// processedDataBytes are the already read bytes from the connection
+	processedDataBytes uint64
 
 	// Connection connection
 	Connection net.Conn
@@ -254,7 +254,7 @@ type LprConnection struct {
 	ClassName string
 
 	// Filesize Filesize
-	Filesize int64
+	Filesize uint64
 
 	// Output output File
 	Output *os.File
@@ -341,10 +341,13 @@ func (lpr *LprConnection) ReadCommand() ([]byte, error) {
 
 		logDebugf("Read %d bytes from socket", bytesRead)
 
-		for i, b := range lpr.buffer {
+		endOfData := offset + bytesRead
+
+		for i, b := range lpr.buffer[:endOfData] {
 			if b == '\n' {
 				if i != (offset+bytesRead)-1 {
-					logErrorf("Garbage at data from socket after byte %d (offset %d): %s", i, offset, string(lpr.buffer[i+1:]))
+					logErrorf("Garbage at data from socket after byte %d (offset %d, bytes read: %d): %s / %+v", i, offset, bytesRead, lpr.buffer, lpr.buffer)
+					logErrorf("Connection: %+v", lpr)
 				}
 
 				return lpr.buffer[:i], nil
@@ -404,6 +407,15 @@ func (lpr *LprConnection) RunConnection() {
 		}
 
 		if err != nil {
+			if errors.Is(err, io.EOF) &&
+				((lpr.dataFileReceived && lpr.controlFileReceived) ||
+					(!lpr.dataFileReceived && !lpr.controlFileReceived)) {
+				logDebugf("Got error while reading command, but this is ok, because client has to close the connection: %s", err.Error())
+				err = nil
+			} else {
+				err = fmt.Errorf("got EOF, but either control file was received (%v) or data file was received (%v): %w", lpr.controlFileReceived, lpr.dataFileReceived, err)
+			}
+
 			lpr.end(err)
 			break
 		} else {
@@ -432,11 +444,6 @@ func (lpr *LprConnection) RunConnection() {
 
 			default:
 				logErrorf("Unexpected connection status %d", lpr.Status)
-			}
-
-			if lpr.dataFileReceived && lpr.controlFileReceived {
-				lpr.end(nil)
-				break
 			}
 		}
 	}
@@ -630,6 +637,10 @@ func (lpr *LprConnection) parseJobSubCommand(command []byte) error {
 func (lpr *LprConnection) receiveControlFile(fileName string, bytes uint64) error {
 	logDebugf("Receiving control file %q with %d bytes", fileName, bytes)
 
+	if lpr.controlFileReceived {
+		logErrorf("Receiving an additional control file over the connection %+v: %s (%d bytes)", lpr, fileName, bytes)
+	}
+
 	// +1, because the sender will add a 0x00 byte to the control file
 	buffer := make([]byte, bytes+1)
 
@@ -803,16 +814,15 @@ func (lpr *LprConnection) parseControlFileLine(line []byte) error {
 func (lpr *LprConnection) receiveDataFile(fileName string, bytes uint64) error {
 	logDebugf("Receiving data file %q with %d bytes", fileName, bytes)
 
-	var err error
-
-	lpr.Filesize = int64(bytes)
-
-	if lpr.Filesize > 2147483648 {
-		lpr.Filesize = 0
-		logDebug("Filesize > 2GB, won't check received byte count")
+	if lpr.dataFileReceived {
+		logErrorf("Receiving an additional data file over the connection %+v: %s (%d bytes)", lpr, fileName, bytes)
 	}
 
-	lpr.tempFilesize = lpr.Filesize
+	var err error
+
+	lpr.Filesize = bytes
+
+	lpr.processedDataBytes = 0
 
 	lpr.Output, err = lpr.createTempFile()
 	if err != nil {
@@ -860,25 +870,22 @@ func (lpr *LprConnection) sendAck() error {
 
 // addToFile This method add the data to the output file
 func (lpr *LprConnection) addToFile(data []uint8) (bool, error) {
+	if len(data) == 0 {
+		return false, nil
+	}
+
 	var err error
 
 	end := false
-	if lpr.Filesize == 0 {
-		// file size is unknown, stop if last byte is \0
-		if len(data) != 0 && data[len(data)-1] == 0 {
-			data = data[:len(data)-1]
-			end = true
-		}
 
-	} else if (lpr.tempFilesize - int64(len(data))) > 0 {
-		lpr.tempFilesize = lpr.tempFilesize - int64(len(data))
-
-	} else {
-		data = data[:lpr.tempFilesize]
-		lpr.tempFilesize = lpr.tempFilesize - int64(len(data))
-
+	// Here we force the binary 0 to be there after the data (which is the sender's part of ACK)
+	if data[len(data)-1] == 0 && (lpr.Filesize == 0 || (lpr.processedDataBytes+uint64(len(data)-1) >= lpr.Filesize)) {
+		// This is the last block and we implicitly read the 0 byte -> cut it away...
+		data = data[:len(data)-1]
 		end = true
 	}
+
+	lpr.processedDataBytes += uint64(len(data))
 
 	_, err = lpr.Output.Write(data)
 	if err != nil {
