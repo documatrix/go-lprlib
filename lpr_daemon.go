@@ -407,6 +407,15 @@ func (lpr *LprConnection) RunConnection() {
 		}
 
 		if err != nil {
+			if errors.Is(err, io.EOF) &&
+				((lpr.dataFileReceived && lpr.controlFileReceived) ||
+					(!lpr.dataFileReceived && !lpr.controlFileReceived)) {
+				logDebugf("Got error while reading command, but this is ok, because client has to close the connection: %s", err.Error())
+				err = nil
+			} else {
+				err = fmt.Errorf("got EOF, but either control file was received (%v) or data file was received (%v): %w", lpr.controlFileReceived, lpr.dataFileReceived, err)
+			}
+
 			lpr.end(err)
 			break
 		} else {
@@ -435,11 +444,6 @@ func (lpr *LprConnection) RunConnection() {
 
 			default:
 				logErrorf("Unexpected connection status %d", lpr.Status)
-			}
-
-			if lpr.dataFileReceived && lpr.controlFileReceived {
-				lpr.end(nil)
-				break
 			}
 		}
 	}
@@ -633,6 +637,10 @@ func (lpr *LprConnection) parseJobSubCommand(command []byte) error {
 func (lpr *LprConnection) receiveControlFile(fileName string, bytes uint64) error {
 	logDebugf("Receiving control file %q with %d bytes", fileName, bytes)
 
+	if lpr.controlFileReceived {
+		logErrorf("Receiving an additional control file over the connection %+v: %s (%d bytes)", lpr, fileName, bytes)
+	}
+
 	// +1, because the sender will add a 0x00 byte to the control file
 	buffer := make([]byte, bytes+1)
 
@@ -805,6 +813,10 @@ func (lpr *LprConnection) parseControlFileLine(line []byte) error {
 
 func (lpr *LprConnection) receiveDataFile(fileName string, bytes uint64) error {
 	logDebugf("Receiving data file %q with %d bytes", fileName, bytes)
+
+	if lpr.dataFileReceived {
+		logErrorf("Receiving an additional data file over the connection %+v: %s (%d bytes)", lpr, fileName, bytes)
+	}
 
 	var err error
 

@@ -2,6 +2,7 @@ package lprlib
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"io/ioutil"
 	"log"
@@ -653,4 +654,61 @@ func TestCheckForUTF8StringEncoding(t *testing.T) {
 			require.Equal(t, tt.result, result)
 		})
 	}
+}
+
+func TestDaemonMustNotCloseConnection(t *testing.T) {
+	SetDebugLogger(log.Print)
+	var err error
+	var out []byte
+	var name string
+
+	port := uint16(2345)
+
+	text := "Text for the file"
+	name, err = generateTempFile("", "", text)
+	require.Nil(t, err)
+
+	fmt.Println("Tempfile:", name)
+
+	var lprd LprDaemon
+	var lprs LprSend
+
+	err = lprd.Init(port, "")
+	require.Nil(t, err)
+
+	file, err := os.Open(name)
+	require.Nil(t, err)
+	defer file.Close()
+
+	// send file with correct size
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	require.Nil(t, err)
+
+	err = lprs.sendFile(file, int64(len(text)))
+	require.Nil(t, err)
+	err = lprs.SendConfiguration()
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+
+	one := make([]byte, 1)
+	lprs.socket.SetReadDeadline(time.Now().Add(1 * time.Second))
+
+	if _, err := lprs.socket.Read(one); err == io.EOF {
+		t.Error("Daemon closed the connection")
+	}
+
+	err = lprs.Close()
+	require.Nil(t, err)
+
+	con := <-lprd.FinishedConnections()
+	require.Equal(t, End, con.Status)
+	out, err = ioutil.ReadFile(con.SaveName)
+	require.Nil(t, err)
+	err = os.Remove(con.SaveName)
+	require.Nil(t, err)
+	require.Equal(t, text, string(out))
+
+	lprd.Close()
+	os.Remove(name)
 }
