@@ -880,7 +880,7 @@ func (lpr *LprConnection) addToFile(data []uint8) (bool, error) {
 
 	// Here we force the binary 0 to be there after the data (which is the sender's part of ACK)
 	if data[len(data)-1] == 0 && (lpr.Filesize == 0 || (lpr.processedDataBytes+uint64(len(data)-1) >= lpr.Filesize)) {
-		// This is the last block and we implicetly read the 0 byte -> cut it away...
+		// This is the last block and we implicitly read the 0 byte -> cut it away...
 		data = data[:len(data)-1]
 		end = true
 	}
