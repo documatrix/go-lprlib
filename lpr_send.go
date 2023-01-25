@@ -414,11 +414,6 @@ func (lpr *LprSend) sendFile(reader io.Reader, fileSize int64) error {
 			size = uint64(rsize)
 		}
 
-		if size < lpr.MaxSize {
-			fileBuffer[size] = 0
-			size++
-		}
-
 		_, err = lpr.writeByte(fileBuffer[:size])
 		if err != nil {
 			return &LprError{"PRINTER_ERROR: " + err.Error()}
@@ -430,6 +425,11 @@ func (lpr *LprSend) sendFile(reader io.Reader, fileSize int64) error {
 		// logDebugf("Send file part: Position=%d, Size=%5d (%2.2f%%)", position, size, percent)
 	}
 	logDebug("File sent")
+
+	_, err = lpr.writeByte([]byte{0})
+	if err != nil {
+		return &LprError{"PRINTER_ERROR: Error sending end-of-data zero byte: " + err.Error()}
+	}
 
 	/*
 	 * Receive answer ( 0 if there wasn't an error )

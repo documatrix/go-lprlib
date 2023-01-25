@@ -484,8 +484,8 @@ func TestDaemonFileSize(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, text, string(out))
 
-	// send file with incorrect size greater than 2GB
-	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Minute)
+	// send file with too small size
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Second*2)
 	require.Nil(t, err)
 
 	err = lprs.SendConfiguration()
@@ -493,7 +493,7 @@ func TestDaemonFileSize(t *testing.T) {
 
 	_, err = file.Seek(0, 0)
 	require.Nil(t, err)
-	err = lprs.sendFile(file, 1024*1024*1024*1024)
+	err = lprs.sendFile(file, 1)
 	require.Nil(t, err)
 	err = lprs.Close()
 	require.Nil(t, err)
