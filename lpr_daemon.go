@@ -829,6 +829,16 @@ func (lpr *LprConnection) receiveDataFile(fileName string, bytes uint64) error {
 		return fmt.Errorf("error while creating temporary file at %s! %w", lpr.daemon.InputFileSaveDir, err)
 	}
 
+	defer func() {
+		err := lpr.Output.Close()
+		if err != nil {
+			logErrorf("error closing output file %q: %s", lpr.Output.Name(), err.Error())
+			return
+		}
+
+		lpr.Output = nil
+	}()
+
 	lpr.SaveName = lpr.Output.Name()
 	logDebugf("New data file: %s", lpr.SaveName)
 
@@ -842,6 +852,11 @@ func (lpr *LprConnection) receiveDataFile(fileName string, bytes uint64) error {
 
 		bytes, err := lpr.Connection.Read(lpr.buffer)
 		if err != nil {
+			if errors.Is(err, io.EOF) && (lpr.Filesize == 0 || lpr.Filesize > 2*1024*1024*1024) {
+				logDebugf("Received error %s, but the file seemed to be transferred (specified %d bytes, got %d bytes)", err.Error(), lpr.Filesize, lpr.processedDataBytes)
+				break
+			}
+
 			return fmt.Errorf("error reading data: %w", err)
 		}
 
@@ -854,6 +869,8 @@ func (lpr *LprConnection) receiveDataFile(fileName string, bytes uint64) error {
 			break
 		}
 	}
+
+	lpr.Status = JobSubCommand
 
 	return nil
 }
@@ -890,17 +907,6 @@ func (lpr *LprConnection) addToFile(data []uint8) (bool, error) {
 	_, err = lpr.Output.Write(data)
 	if err != nil {
 		return false, fmt.Errorf("write failed: %w", err)
-	}
-
-	if end {
-		err = lpr.Output.Close()
-		if err != nil {
-			return false, fmt.Errorf("error closing output file %q: %w", lpr.Output.Name(), err)
-		}
-
-		lpr.Output = nil
-
-		lpr.Status = JobSubCommand
 	}
 
 	return end, nil
