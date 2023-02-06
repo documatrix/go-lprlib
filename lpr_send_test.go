@@ -104,10 +104,12 @@ func TestSendWithExternalIDGeneration(t *testing.T) {
 	}()
 
 	externalIDs := make([]uint64, 3)
+
+	stopGenerator := make(chan bool)
 	go func() {
 		for {
 			select {
-			case <-lprd.ctx.Done():
+			case <-stopGenerator:
 				// quit goroutine
 				return
 			case conn := <-lprd.FinishedConnections():
@@ -136,4 +138,6 @@ func TestSendWithExternalIDGeneration(t *testing.T) {
 	require.EqualValues(t, []uint64{1, 2, 3}, externalIDs)
 
 	lprd.Close()
+
+	close(stopGenerator)
 }

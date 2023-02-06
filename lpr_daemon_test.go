@@ -404,14 +404,14 @@ func TestDaemonClose(t *testing.T) {
 	lprd.Close()
 
 	err = lprs.SendFile()
-	require.NotNil(t, err)
+	require.Nil(t, err)
 
 	err = lprs.Close()
 	require.Nil(t, err)
 
-	// connection must have error state
+	// connection must be ok
 	conn := <-lprd.FinishedConnections()
-	require.Equal(t, Error, conn.Status)
+	require.Equal(t, End, conn.Status)
 
 	// no new connection may be opened
 	lprs = LprSend{}
