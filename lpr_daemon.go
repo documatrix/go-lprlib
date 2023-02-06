@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -41,8 +42,9 @@ type LprDaemon struct {
 	finishedConns chan *LprConnection
 	connections   chan *LprConnection
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	// closeSocket is used to notify the Listen method, that the socket should be closed.
+	// It is closed by the Close method to notify, that an error returned from Accept means "stop".
+	closeSocket chan bool
 
 	socket net.Listener
 
@@ -81,9 +83,9 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 
 	lpr.fileMask = 0600
 
-	lpr.ctx, lpr.cancel = context.WithCancel(context.Background())
 	lpr.finishedConns = make(chan *LprConnection, 100)
 	lpr.connections = make(chan *LprConnection, 100)
+	lpr.closeSocket = make(chan bool)
 
 	listenAddr := fmt.Sprintf(":%d", port)
 	logDebugf("Listening on: %s", listenAddr)
@@ -101,14 +103,8 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 }
 
 func (lpr *LprDaemon) externalIDGenerator() {
-	for {
-		select {
-		case conn := <-lpr.connections:
-			lpr.generateExternalID(conn)
-		case <-lpr.ctx.Done():
-			// quit id generator routine
-			return
-		}
+	for conn := range lpr.connections {
+		lpr.generateExternalID(conn)
 	}
 }
 
@@ -150,34 +146,54 @@ func (lpr *LprDaemon) SetFallbackEncoding(encodingName string) error {
 
 // Listen waits for a new connection and accept them
 func (lpr *LprDaemon) Listen() {
+	wg := sync.WaitGroup{}
+
 	for {
-
-		logDebug("Wait for Connections...")
+		logDebug("Wait for next connection...")
 		newConn, err := lpr.socket.Accept()
-
-		select {
-		case <-lpr.ctx.Done():
-			if newConn != nil {
-				newConn.Close()
-			}
-			logDebug("Listener closed")
-			return
-		default:
-		}
 		if err != nil {
-			logError("Can't accept connection: " + err.Error())
-		}
-		logDebug("Accepted Client")
+			select {
+			case <-lpr.closeSocket:
+				logDebug("Waiting for running connections to finish")
+				wg.Wait()
 
-		var newLprcon LprConnection
-		newLprcon.Init(newConn, 0, lpr, lpr.ctx)
+				logDebug("Running connections finished")
+				close(lpr.finishedConns)
+
+				// Inform the external ID generator, that it should stop
+				close(lpr.connections)
+
+				return
+			default:
+			}
+
+			logError("Can't accept connection: " + err.Error())
+		} else {
+			logDebug("Accepted Client")
+
+			wg.Add(1)
+
+			var newLprcon LprConnection
+			newLprcon.Init(newConn, 0, lpr)
+
+			go func() {
+				newLprcon.RunConnection()
+				wg.Done()
+			}()
+		}
 	}
 }
 
 // Close Closes all LprConnections and the listener
 func (lpr *LprDaemon) Close() {
-	lpr.cancel()
-	lpr.socket.Close()
+	logDebug("Closing socket")
+
+	close(lpr.closeSocket)
+
+	err := lpr.socket.Close()
+	if err != nil {
+		logErrorf("Error closing socket: %s", err.Error())
+	}
 }
 
 // FinishedConnections returns a channel containing the finished connections.
@@ -271,9 +287,6 @@ type LprConnection struct {
 	// SaveName The File name of the new file
 	SaveName string
 
-	// done is used to stop all go routines of the connection.
-	done chan bool
-
 	// ctx is the lpr daemon's context.
 	// The connection must be closed once the context is canceled.
 	ctx context.Context
@@ -297,7 +310,7 @@ type LprConnection struct {
 // Init is the constructor of LprConnection
 // socket is the accepted connection
 // bufferSize is per default 8192
-func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDaemon, ctx context.Context) {
+func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDaemon) {
 	if bufferSize == 0 {
 		bufferSize = 8192
 	}
@@ -305,26 +318,11 @@ func (lpr *LprConnection) Init(socket net.Conn, bufferSize int64, daemon *LprDae
 	lpr.buffer = make([]byte, bufferSize)
 	lpr.Connection = socket
 	lpr.BufferSize = bufferSize
-	lpr.done = make(chan bool)
 	lpr.daemon = daemon
-	lpr.ctx = ctx
 	lpr.typeChan = make(chan ConnectionType, 1)
 	lpr.externalIDChan = make(chan uint64, 1)
 
 	daemon.connections <- lpr
-
-	go func() {
-		select {
-		case <-ctx.Done():
-			err := lpr.Connection.Close()
-			if err != nil {
-				logErrorf("error closing connection: %v", err)
-			}
-		case <-lpr.done:
-		}
-	}()
-
-	go lpr.RunConnection()
 }
 
 // ReadCommand reads from the socket until the newline character occurs, but only a maximum number of len(buffer) bytes.
@@ -361,12 +359,8 @@ func (lpr *LprConnection) ReadCommand() ([]byte, error) {
 // RunConnection This method read the data from the client
 func (lpr *LprConnection) RunConnection() {
 	defer func() {
-		close(lpr.done)
 		close(lpr.typeChan)
-		select {
-		case lpr.ExternalID = <-lpr.externalIDChan:
-		case <-lpr.ctx.Done():
-		}
+		lpr.ExternalID = <-lpr.externalIDChan
 		lpr.daemon.finishedConns <- lpr
 	}()
 
@@ -387,13 +381,6 @@ func (lpr *LprConnection) RunConnection() {
 
 	for lpr.Status != Error && lpr.Status != End {
 		command, err := lpr.ReadCommand()
-
-		select {
-		case <-lpr.ctx.Done():
-			lpr.end(fmt.Errorf("exit connection"))
-			return
-		default:
-		}
 
 		if traceFile != nil {
 			traceFile.WriteString(fmt.Sprintf("received message %d:\n", len(command)))
@@ -843,13 +830,6 @@ func (lpr *LprConnection) receiveDataFile(fileName string, bytes uint64) error {
 	logDebugf("New data file: %s", lpr.SaveName)
 
 	for {
-		select {
-		case <-lpr.ctx.Done():
-			return fmt.Errorf("exit connection")
-
-		default:
-		}
-
 		bytes, err := lpr.Connection.Read(lpr.buffer)
 		if err != nil {
 			if errors.Is(err, io.EOF) && (lpr.Filesize == 0 || lpr.Filesize > 2*1024*1024*1024) {
