@@ -43,7 +43,7 @@ type LprDaemon struct {
 	connections   chan *LprConnection
 
 	// closeSocket is used to notify the Listen method, that the socket should be closed.
-	// It receives is closed by the Close method to notify, that an error returned from Accept means "stop".
+	// It is closed by the Close method to notify, that an error returned from Accept means "stop".
 	closeSocket chan bool
 
 	socket net.Listener
@@ -103,14 +103,8 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 }
 
 func (lpr *LprDaemon) externalIDGenerator() {
-	for {
-		select {
-		case conn := <-lpr.connections:
-			lpr.generateExternalID(conn)
-		case <-lpr.closeSocket:
-			// quit id generator routine
-			return
-		}
+	for conn := range lpr.connections {
+		lpr.generateExternalID(conn)
 	}
 }
 
@@ -166,6 +160,9 @@ func (lpr *LprDaemon) Listen() {
 				logDebug("Running connections finished")
 				close(lpr.finishedConns)
 
+				// Inform the external ID generator, that it should stop
+				close(lpr.connections)
+
 				return
 			default:
 			}
@@ -191,12 +188,12 @@ func (lpr *LprDaemon) Listen() {
 func (lpr *LprDaemon) Close() {
 	logDebug("Closing socket")
 
+	close(lpr.closeSocket)
+
 	err := lpr.socket.Close()
 	if err != nil {
 		logErrorf("Error closing socket: %s", err.Error())
 	}
-
-	close(lpr.closeSocket)
 }
 
 // FinishedConnections returns a channel containing the finished connections.
