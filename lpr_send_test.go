@@ -105,28 +105,21 @@ func TestSendWithExternalIDGeneration(t *testing.T) {
 
 	externalIDs := make([]uint64, 3)
 
-	stopGenerator := make(chan bool)
 	go func() {
-		for {
-			select {
-			case <-stopGenerator:
-				// quit goroutine
-				return
-			case conn := <-lprd.FinishedConnections():
-				out, err := ioutil.ReadFile(conn.SaveName)
-				require.Nil(t, err)
-				os.Remove(conn.SaveName)
-				require.Equal(t, text, string(out))
-				switch conn.UserIdentification {
-				case "TestUser1":
-					externalIDs[0] = conn.ExternalID
-				case "TestUser2":
-					externalIDs[1] = conn.ExternalID
-				case "TestUser3":
-					externalIDs[2] = conn.ExternalID
-				default:
-					panic(fmt.Errorf("Invalid UserIdentification: %q", conn.UserIdentification))
-				}
+		for conn := range lprd.FinishedConnections() {
+			out, err := ioutil.ReadFile(conn.SaveName)
+			require.Nil(t, err)
+			os.Remove(conn.SaveName)
+			require.Equal(t, text, string(out))
+			switch conn.UserIdentification {
+			case "TestUser1":
+				externalIDs[0] = conn.ExternalID
+			case "TestUser2":
+				externalIDs[1] = conn.ExternalID
+			case "TestUser3":
+				externalIDs[2] = conn.ExternalID
+			default:
+				panic(fmt.Errorf("Invalid UserIdentification: %q", conn.UserIdentification))
 			}
 		}
 	}()
@@ -138,6 +131,4 @@ func TestSendWithExternalIDGeneration(t *testing.T) {
 	require.EqualValues(t, []uint64{1, 2, 3}, externalIDs)
 
 	lprd.Close()
-
-	close(stopGenerator)
 }
