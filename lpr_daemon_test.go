@@ -712,3 +712,159 @@ func TestDaemonMustNotCloseConnection(t *testing.T) {
 	lprd.Close()
 	os.Remove(name)
 }
+
+func TestDaemonWithInvalidControlFileContent(t *testing.T) {
+	SetDebugLogger(log.Print)
+
+	port := uint16(2345)
+
+	text := "Text for the file"
+	file, err := generateTempFile("", "", text)
+	require.Nil(t, err)
+	defer os.Remove(file)
+
+	var lprd LprDaemon
+
+	nextExternalID := uint64(0)
+	// set lprd callback function
+	lprd.GetExternalID = func() uint64 {
+		nextExternalID++
+		return nextExternalID
+	}
+
+	err = lprd.Init(port, "")
+	require.Nil(t, err)
+
+	err = customSendFunc("", file, "127.0.0.1", port, "raw", "TestUser1\n\n", time.Minute)
+	require.Nil(t, err)
+
+	conn := <-lprd.FinishedConnections()
+	out, err := os.ReadFile(conn.SaveName)
+	require.Nil(t, err)
+	require.Nil(t, os.Remove(conn.SaveName))
+	require.Equal(t, text, string(out))
+	require.Equal(t, uint64(1), conn.ExternalID)
+	require.Equal(t, "TestUser1", conn.UserIdentification)
+
+	err = customSendFunc("\n", file, "127.0.0.1", port, "raw", "TestUser2", time.Minute)
+	require.Nil(t, err)
+
+	conn = <-lprd.FinishedConnections()
+	out, err = os.ReadFile(conn.SaveName)
+	require.Nil(t, err)
+	require.Nil(t, os.Remove(conn.SaveName))
+	require.Equal(t, text, string(out))
+	require.Equal(t, uint64(2), conn.ExternalID)
+	require.Equal(t, "TestUser2", conn.UserIdentification)
+
+	lprd.Close()
+}
+
+func customSendFunc(configPrefix string, file string, hostname string, port uint16, queue string, username string, timeout time.Duration) (err error) {
+	lpr := &LprSend{}
+
+	err = lpr.Init(hostname, file, port, queue, username, timeout)
+	if err != nil {
+		err = fmt.Errorf("Error initializing connection to LPR printer %s, port %d, queue: %s! %s", hostname, port, queue, err)
+		return
+	}
+
+	defer func() {
+		cerr := lpr.Close()
+		if err == nil {
+			err = cerr
+		}
+	}()
+
+	err = customSendConfiguration(lpr, configPrefix)
+	if err != nil {
+		err = fmt.Errorf("Error sending configuration to LPR printer %s, port %d, queue: %s! %s", hostname, port, queue, err)
+		return
+	}
+
+	err = lpr.SendFile()
+	if err != nil {
+		err = fmt.Errorf("Error sending file to LPR printer %s, port %d, queue: %s! %s", hostname, port, queue, err)
+		return
+	}
+
+	return
+}
+
+func customSendConfiguration(lpr *LprSend, customConfigPrefix string) error {
+
+	if err := lpr.startPrintJob(); err != nil {
+		return err
+	}
+
+	/* receive_buffer is the buffer for the answer of the remote Server */
+	receiveBuffer := make([]byte, 1)
+
+	/* Create config data string */
+	configData := customConfigPrefix
+	for i, ia := range lpr.Config {
+		configData += fmt.Sprintf("%c%s\n", i, ia)
+	}
+
+	if configData == "" {
+		return &LprError{"CONFIG_NOT_FOUND Cannot found printer configuration"}
+	}
+
+	/* Host name */
+	osHostname, err := os.Hostname()
+	if err != nil {
+		return &LprError{"Can't resolve Hostname"}
+	}
+
+	/* Send the server the length of the configuration */
+	configInfo := fmt.Sprintf("%c%d cfA000%s\n", 0x02, len(configData), osHostname)
+	_, err = lpr.writeString(configInfo)
+	if err != nil {
+		return &LprError{"PRINTER_ERROR: " + err.Error()}
+	}
+	logDebug("Config info:", configInfo)
+
+	/*
+	 * Receive answer ( 0 if there wasn't an error )
+	 */
+	length, err := lpr.readByte(receiveBuffer)
+	if err != nil {
+		return &LprError{err.Error()}
+	}
+	if length != 0 {
+		logDebugf("Received: %d", receiveBuffer[0])
+		if receiveBuffer[0] != 0 {
+			errorstring := fmt.Sprint("PRINTER_ERROR Printer reported an error (", receiveBuffer[0], ")!")
+			return &LprError{errorstring}
+		}
+	}
+
+	/*
+	 * Send the server the configuration
+	 * A data transmit must have a 0 byte at the ending
+	 */
+	sendBuffer := configData + "\x00"
+
+	_, err = lpr.writeString(sendBuffer)
+	if err != nil {
+		return &LprError{"PRINTER_ERROR: " + err.Error()}
+	}
+	logDebug("Config:\n", configData)
+
+	/*
+	 * Receive answer ( 0 if there wasn't an error )
+	 */
+	length, err = lpr.readByte(receiveBuffer)
+	if err != nil {
+		return &LprError{err.Error()}
+	}
+	if length != 0 {
+		logDebugf("Received: %d", receiveBuffer[0])
+		if receiveBuffer[0] != 0 {
+			errorstring := fmt.Sprint("PRINTER_ERROR Printer reported an error (", receiveBuffer[0], ")!")
+			return &LprError{errorstring}
+		}
+	}
+
+	return nil
+}

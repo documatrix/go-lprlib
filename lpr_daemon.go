@@ -665,8 +665,12 @@ func (lpr *LprConnection) receiveControlFile(fileName string, bytes uint64) erro
 }
 
 func (lpr *LprConnection) parseControlFileLine(line []byte) error {
-	var err error
+	if len(line) == 0 {
+		// empty line
+		return nil
+	}
 
+	var err error
 	switch line[0] {
 	/* C - Class for banner page */
 	case 'C':
