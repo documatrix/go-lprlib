@@ -87,7 +87,7 @@ func (lpr *LprDaemon) Init(port uint16, ipAddress string) error {
 	lpr.connections = make(chan *LprConnection, 100)
 	lpr.closeSocket = make(chan bool)
 
-	listenAddr := fmt.Sprintf(":%d", port)
+	listenAddr := fmt.Sprintf("%s:%d", ipAddress, port)
 	logDebugf("Listening on: %s", listenAddr)
 
 	var err error
