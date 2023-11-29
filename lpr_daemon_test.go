@@ -796,6 +796,8 @@ func TestClosedConnectionCases(t *testing.T) {
 	require.Equal(t, End, connection.Status)
 	// ExternalID is not set
 	require.Equal(t, uint64(0), connection.ExternalID)
+	// SaveName is not set
+	require.Empty(t, connection.SaveName)
 
 	//////////////////
 	// Connection closed after print job command
