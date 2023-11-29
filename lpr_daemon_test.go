@@ -760,6 +760,69 @@ func TestDaemonWithInvalidControlFileContent(t *testing.T) {
 	lprd.Close()
 }
 
+func TestClosedConnectionCases(t *testing.T) {
+	SetDebugLogger(log.Print)
+
+	port := uint16(2345)
+
+	text := "Text for the file"
+	file, err := generateTempFile("", "", text)
+	require.Nil(t, err)
+	defer os.Remove(file)
+
+	var lprd LprDaemon
+
+	nextExternalID := uint64(10)
+	// set lprd callback function
+	lprd.GetExternalID = func() uint64 {
+		nextExternalID++
+		return nextExternalID
+	}
+
+	err = lprd.Init(port, "")
+	require.Nil(t, err)
+
+	// Connection closed without sending commands
+	lpr := &LprSend{}
+	err = lpr.Init("127.0.0.1", file, port, "", "", time.Minute)
+	require.Nil(t, err)
+
+	// Close connection
+	err = lpr.Close()
+	require.Nil(t, err)
+
+	connection := <-lprd.FinishedConnections()
+	// Connection results in End
+	require.Equal(t, End, connection.Status)
+	// ExternalID is not set
+	require.Equal(t, uint64(0), connection.ExternalID)
+	// SaveName is not set
+	require.Empty(t, connection.SaveName)
+
+	//////////////////
+	// Connection closed after print job command
+	lpr = &LprSend{}
+
+	err = lpr.Init("127.0.0.1", file, port, "", "", time.Minute)
+	require.Nil(t, err)
+
+	// write 0x02 - Print job command
+	_, err = lpr.writeByte([]byte{'\x02', '\n'})
+	require.Nil(t, err)
+
+	// Close connection without sending subcommand
+	err = lpr.Close()
+	require.Nil(t, err)
+
+	connection = <-lprd.FinishedConnections()
+	// Connection results in Error
+	require.Equal(t, Error, connection.Status)
+	// ExternalID is set
+	require.Equal(t, uint64(11), connection.ExternalID)
+
+	lprd.Close()
+}
+
 func customSendFunc(configPrefix string, file string, hostname string, port uint16, queue string, username string, timeout time.Duration) (err error) {
 	lpr := &LprSend{}
 

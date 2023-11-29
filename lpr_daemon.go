@@ -394,13 +394,15 @@ func (lpr *LprConnection) RunConnection() {
 		}
 
 		if err != nil {
-			if errors.Is(err, io.EOF) &&
-				((lpr.dataFileReceived && lpr.controlFileReceived) ||
-					(!lpr.dataFileReceived && !lpr.controlFileReceived)) {
-				logDebugf("Got error while reading command, but this is ok, because client has to close the connection: %s", err.Error())
-				err = nil
-			} else {
-				err = fmt.Errorf("got EOF, but either control file was received (%v) or data file was received (%v): %w", lpr.controlFileReceived, lpr.dataFileReceived, err)
+			if errors.Is(err, io.EOF) {
+				if lpr.Status == JobSubCommand && (!lpr.dataFileReceived && !lpr.controlFileReceived) {
+					err = fmt.Errorf("got Print job command, but the connection was closed without receiving a subcommand: %w", err)
+				} else if (lpr.dataFileReceived && lpr.controlFileReceived) || (!lpr.dataFileReceived && !lpr.controlFileReceived) {
+					logDebugf("Got error while reading command, but this is ok, because client has to close the connection: %s", err.Error())
+					err = nil
+				} else {
+					err = fmt.Errorf("got EOF, but either control file was received (%v) or data file was received (%v): %w", lpr.controlFileReceived, lpr.dataFileReceived, err)
+				}
 			}
 
 			lpr.end(err)
