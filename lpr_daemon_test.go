@@ -526,6 +526,28 @@ func TestDaemonFileSize(t *testing.T) {
 	err = os.Remove(con.SaveName)
 	require.Nil(t, err)
 
+	// send file with negative size
+	err = lprs.Init("127.0.0.1", name, port, "raw", "TestUser", time.Second*2)
+	require.Nil(t, err)
+
+	err = lprs.SendConfiguration()
+	require.Nil(t, err)
+
+	_, err = file.Seek(0, 0)
+	require.Nil(t, err)
+	err = lprs.sendFile(file, -1024)
+	require.Nil(t, err)
+	err = lprs.Close()
+	require.Nil(t, err)
+
+	con = <-lprd.FinishedConnections()
+	require.Equal(t, End, con.Status)
+	out, err = os.ReadFile(con.SaveName)
+	require.Nil(t, err)
+	err = os.Remove(con.SaveName)
+	require.Nil(t, err)
+	require.Equal(t, text, string(out))
+
 	time.Sleep(time.Second)
 
 	lprd.Close()

@@ -594,9 +594,14 @@ func (lpr *LprConnection) parseJobSubCommand(command []byte) error {
 			return fmt.Errorf("received job sub command %s, but got %d operands (and expected 2)", string(command), len(operands))
 		}
 
-		dataFileSize, err := strconv.ParseUint(operands[0], 10, 64)
+		dataFileSize, err := strconv.ParseInt(operands[0], 10, 64)
 		if err != nil {
 			return fmt.Errorf("error parsing data file size %q: %w", operands[0], err)
+		}
+		dataFileSizeU := uint64(dataFileSize)
+		if dataFileSize < 0 {
+			logErrorf("Received negative file size %s (%d)! Falling back to zero file size handling", operands[0], dataFileSize)
+			dataFileSizeU = 0
 		}
 
 		err = lpr.sendAck()
@@ -604,7 +609,7 @@ func (lpr *LprConnection) parseJobSubCommand(command []byte) error {
 			return err
 		}
 
-		err = lpr.receiveDataFile(operands[1], dataFileSize)
+		err = lpr.receiveDataFile(operands[1], dataFileSizeU)
 		if err != nil {
 			return fmt.Errorf("error receiving data file: %w", err)
 		}
