@@ -1,15 +1,22 @@
 package lprlib
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 )
 
-// GetStatus Reads the Status from the printer
-func GetStatus(hostname string, port uint16, queue string, long bool, timeout time.Duration) (string, error) {
-
+// GetStatus Reads the status of the given queue on the given host (and port).
+// The timeout parameter specifies the maximum time to wait for the connection
+// and for each read/write operation. If timeout is 0, a default of 2 seconds
+// is used. The long parameter specifies whether to request a long listing
+// (true) or a short listing (false). The ignoreForcefulClose parameter controls
+// if the read-status should ignore forceful connection closures by the server (which
+// sometimes happens).
+func GetStatus(hostname string, port uint16, queue string, long bool, timeout time.Duration, ignoreForcefulClose bool) (string, error) {
 	// Set default Port
 	if port == 0 {
 		port = 515
@@ -88,6 +95,17 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 			if err == io.EOF {
 				break
 			} else {
+				if ignoreForcefulClose {
+					opErr := &net.OpError{}
+
+					if errors.As(err, &opErr) {
+						if strings.Contains(opErr.Error(), "connection was forcibly closed by the remote host") || strings.Contains(opErr.Error(), "connection reset by peer") {
+							logDebugf("Ignoring forceful connection closure by server")
+							break
+						}
+					}
+				}
+
 				return "", &LprError{"Error while reading status: " + err.Error()}
 			}
 		}
