@@ -65,7 +65,7 @@ func TestGetStatus(t *testing.T) {
 	lprd.Close()
 }
 
-func TestGetStatus_ServerClosesImmediatlyAfterCommand(t *testing.T) {
+func TestGetStatus_ServerClosesImmediatelyAfterCommand(t *testing.T) {
 	listener, err := net.Listen("tcp", net.JoinHostPort("localhost", "0"))
 	require.NoError(t, err)
 
