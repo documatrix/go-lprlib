@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
+	"syscall"
 	"time"
 )
 
@@ -99,7 +99,10 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 					opErr := &net.OpError{}
 
 					if errors.As(err, &opErr) {
-						if strings.Contains(opErr.Error(), "connection was forcibly closed by the remote host") || strings.Contains(opErr.Error(), "connection reset by peer") {
+						// Check for connection reset errors at the syscall level
+						// This works cross-platform: ECONNRESET on Unix-like systems,
+						// WSAECONNRESET on Windows
+						if errors.Is(opErr, syscall.ECONNRESET) {
 							logDebugf("Ignoring forceful connection closure by server")
 							break
 						}
