@@ -1,7 +1,6 @@
 package lprlib
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -32,10 +31,6 @@ const (
 type QueueState func(queue string, list string, long bool) string
 
 type ExternalIDCallbackFunc func() uint64
-
-func init() {
-	rand.Seed(time.Now().UnixMicro())
-}
 
 // LprDaemon structure
 type LprDaemon struct {
@@ -287,10 +282,6 @@ type LprConnection struct {
 	// SaveName The File name of the new file
 	SaveName string
 
-	// ctx is the lpr daemon's context.
-	// The connection must be closed once the context is canceled.
-	ctx context.Context
-
 	// daemon contains a reference to the LprDaemon
 	daemon *LprDaemon
 
@@ -374,22 +365,51 @@ func (lpr *LprConnection) RunConnection() {
 		if err != nil {
 			logErrorf("failed to create trace file: %v", err)
 		}
-		defer traceFile.Close()
+
+		defer func() {
+			err := traceFile.Close()
+			if err != nil {
+				logErrorf("failed to close trace file %s: %v", traceFile.Name(), err)
+			}
+		}()
+
 		logDebugf("Created trace file %s", traceFile.Name())
-		traceFile.WriteString(fmt.Sprintf("LPR connection trace %s\n", time.Now()))
+
+		_, err = fmt.Fprintf(traceFile, "LPR connection trace %s\n", time.Now())
+		if err != nil {
+			logErrorf("failed to write to trace file %s: %v", traceFile.Name(), err)
+		}
 	}
 
 	for lpr.Status != Error && lpr.Status != End {
 		command, err := lpr.ReadCommand()
 
 		if traceFile != nil {
-			traceFile.WriteString(fmt.Sprintf("received message %d:\n", len(command)))
+			_, traceErr := fmt.Fprintf(traceFile, "received message %d:\n", len(command))
+			if traceErr != nil {
+				logErrorf("failed to write to trace file %s: %v", traceFile.Name(), traceErr)
+			}
+
 			if err != nil {
-				traceFile.WriteString(fmt.Sprintf("error: %v\n", err))
+				_, traceErr = fmt.Fprintf(traceFile, "error: %v\n", err)
+				if traceErr != nil {
+					logErrorf("failed to write to trace file %s: %v", traceFile.Name(), traceErr)
+				}
 			} else {
-				traceFile.WriteString("-----\n")
-				traceFile.Write(command)
-				traceFile.WriteString("\n-----\n")
+				_, traceErr = traceFile.WriteString("-----\n")
+				if traceErr != nil {
+					logErrorf("failed to write to trace file %s: %v", traceFile.Name(), traceErr)
+				}
+
+				_, traceErr = traceFile.Write(command)
+				if traceErr != nil {
+					logErrorf("failed to write to trace file %s: %v", traceFile.Name(), traceErr)
+				}
+
+				_, traceErr = traceFile.WriteString("\n-----\n")
+				if traceErr != nil {
+					logErrorf("failed to write to trace file %s: %v", traceFile.Name(), traceErr)
+				}
 			}
 		}
 

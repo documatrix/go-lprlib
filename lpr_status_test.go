@@ -2,6 +2,7 @@ package lprlib
 
 import (
 	"log"
+	"net"
 	"testing"
 	"time"
 
@@ -34,19 +35,19 @@ func TestGetStatus(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	status, err := GetStatus("127.0.0.1", port, rawQueue, false, 2*time.Second)
+	status, err := GetStatus("127.0.0.1", port, rawQueue, false, 2*time.Second, false)
 	require.Nil(t, err)
 	require.NotEmpty(t, status)
 
 	lprd.GetQueueState = getShortQueueState
 
-	status, err = GetStatus("127.0.0.1", port, rawQueue, false, 2*time.Second)
+	status, err = GetStatus("127.0.0.1", port, rawQueue, false, 2*time.Second, false)
 	require.Nil(t, err)
 	require.Equal(t, shortQueueState, status)
 
 	lprd.GetQueueState = getLongQueueState
 
-	status, err = GetStatus("127.0.0.1", port, rawQueue, true, 2*time.Second)
+	status, err = GetStatus("127.0.0.1", port, rawQueue, true, 2*time.Second, false)
 	require.Nil(t, err)
 	require.Equal(t, longQueueState, status)
 
@@ -62,4 +63,34 @@ func TestGetStatus(t *testing.T) {
 	}
 
 	lprd.Close()
+}
+
+func TestGetStatus_ServerClosesImmediatelyAfterCommand(t *testing.T) {
+	listener, err := net.Listen("tcp", net.JoinHostPort("localhost", "0"))
+	require.NoError(t, err)
+
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		require.NoError(t, err)
+
+		defer conn.Close()
+
+		// Read command byte
+		buf := make([]byte, 1024)
+		_, err = conn.Read(buf)
+		require.NoError(t, err)
+
+		// Close connection immediately
+		err = conn.(*net.TCPConn).SetLinger(0)
+		require.NoError(t, err)
+	}()
+
+	status, err := GetStatus("localhost", uint16(listener.Addr().(*net.TCPAddr).Port), "raw", false, 2*time.Second, true)
+	require.NoError(t, err)
+	require.Empty(t, status)
+
+	_, err = GetStatus("localhost", uint16(listener.Addr().(*net.TCPAddr).Port), "raw", false, 2*time.Second, false)
+	require.Error(t, err)
 }
