@@ -365,7 +365,14 @@ func (lpr *LprConnection) RunConnection() {
 		if err != nil {
 			logErrorf("failed to create trace file: %v", err)
 		}
-		defer traceFile.Close()
+
+		defer func() {
+			err := traceFile.Close()
+			if err != nil {
+				logErrorf("failed to close trace file %s: %v", traceFile.Name(), err)
+			}
+		}()
+
 		logDebugf("Created trace file %s", traceFile.Name())
 
 		_, err = fmt.Fprintf(traceFile, "LPR connection trace %s\n", time.Now())
@@ -389,9 +396,20 @@ func (lpr *LprConnection) RunConnection() {
 					logErrorf("failed to write to trace file %s: %v", traceFile.Name(), traceErr)
 				}
 			} else {
-				traceFile.WriteString("-----\n")
-				traceFile.Write(command)
-				traceFile.WriteString("\n-----\n")
+				_, traceErr = traceFile.WriteString("-----\n")
+				if traceErr != nil {
+					logErrorf("failed to write to trace file %s: %v", traceFile.Name(), traceErr)
+				}
+
+				_, traceErr = traceFile.Write(command)
+				if traceErr != nil {
+					logErrorf("failed to write to trace file %s: %v", traceFile.Name(), traceErr)
+				}
+
+				_, traceErr = traceFile.WriteString("\n-----\n")
+				if traceErr != nil {
+					logErrorf("failed to write to trace file %s: %v", traceFile.Name(), traceErr)
+				}
 			}
 		}
 
