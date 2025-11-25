@@ -102,7 +102,7 @@ func GetStatus(hostname string, port uint16, queue string, long bool, timeout ti
 						// Check for connection reset errors at the syscall level
 						// This works cross-platform: ECONNRESET on Unix-like systems,
 						// WSAECONNRESET on Windows
-						if errors.Is(opErr, syscall.ECONNRESET) {
+						if errors.Is(opErr.Err, syscall.ECONNRESET) {
 							logDebugf("Ignoring forceful connection closure by server")
 							break
 						}
